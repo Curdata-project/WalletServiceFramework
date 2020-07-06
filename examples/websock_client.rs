@@ -149,20 +149,22 @@ async fn main() {
     let lock_ws_sender = Arc::new(Mutex::new(WebSockWriteHalf(None)));
 
     let local = tokio::task::LocalSet::new();
-    local.run_until(async move{
-        tokio::task::spawn_local(receiver_loop(
-            case_url,
-            lock_ws_receiver.clone(),
-            lock_ws_sender.clone(),
-        ));
-        
-        let mut reader = BufReader::new(tokio::io::stdin());
-        loop {
-            let mut str_cmd = String::new();
-            reader.read_line(&mut str_cmd).await.unwrap();
-            str_cmd.pop();
-    
-            ws_send(str_cmd, lock_ws_sender.clone()).await;
-        }
-    }).await;
+    local
+        .run_until(async move {
+            tokio::task::spawn_local(receiver_loop(
+                case_url,
+                lock_ws_receiver.clone(),
+                lock_ws_sender.clone(),
+            ));
+
+            let mut reader = BufReader::new(tokio::io::stdin());
+            loop {
+                let mut str_cmd = String::new();
+                reader.read_line(&mut str_cmd).await.unwrap();
+                str_cmd.pop();
+
+                ws_send(str_cmd, lock_ws_sender.clone()).await;
+            }
+        })
+        .await;
 }

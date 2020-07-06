@@ -7,7 +7,7 @@ static LOCAL_SERVER: &'static str = "127.0.0.1:9000";
 async fn main() {
     use env_logger::Env;
     env_logger::from_env(Env::default().default_filter_or("warn")).init();
-    
+
     let bind_transport = env::args()
         .nth(1)
         .unwrap_or_else(|| LOCAL_SERVER.to_string());

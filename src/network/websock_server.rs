@@ -1,6 +1,8 @@
 use crate::error::WallerError;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
+use std::future::Future;
+use std::pin::Pin;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::accept_async;
@@ -33,17 +35,31 @@ impl WsServer {
         Ok(instance)
     }
 
-    pub async fn listen_loop(mut self) {
+    pub async fn listen_loop<F>(mut self, dispatch_loop: F)
+    where
+        F: Fn(
+                mpsc::Receiver<String>,
+                mpsc::Sender<String>,
+            ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+            + Clone,
+    {
         while let Ok((stream, _)) = self.listener.accept().await {
             tokio::spawn(async move {
-                if let Err(err) = Self::client_loop(stream).await {
+                if let Err(err) = Self::client_loop(stream, dispatch_loop.clone()).await {
                     log::error!("{}", err);
                 }
             });
         }
     }
 
-    async fn client_loop(stream: TcpStream) -> Result<(), String> {
+    async fn client_loop<F>(stream: TcpStream, dispatch_loop: F) -> Result<(), String>
+    where
+        F: Fn(
+                mpsc::Receiver<String>,
+                mpsc::Sender<String>,
+            ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+            + Clone,
+    {
         let peer = stream
             .peer_addr()
             .map_err(|err| format!("expect at client fn get_peer_addr, with info: {}", err))?;
@@ -62,7 +78,7 @@ impl WsServer {
         let (mut resp_pipe_in, mut resp_pipe_out) = mpsc::channel(REQ_QUEUE_LEN);
 
         tokio::select! {
-            _ = Self::dispatch_loop(req_pipe_out, resp_pipe_in) => {
+            _ = dispatch_loop(req_pipe_out, resp_pipe_in) => {
                 log::info!("client {} close because dispatch_loop", peer);
             },
             _ = Self::read_half_loop(read_half, req_pipe_in) => {

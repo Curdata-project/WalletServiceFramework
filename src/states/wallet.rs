@@ -1,6 +1,7 @@
+use crate::Error;
 use crate::Machine;
-use alloc::string::ToString;
 use alloc::string::String;
+use alloc::string::ToString;
 
 enum WalletState {
     Begin,
@@ -44,6 +45,10 @@ impl Default for WalletMachine {
 }
 
 impl Machine for WalletMachine {
+    fn name(&self) -> String {
+        "wallet".to_string()
+    }
+
     fn to_string(&self) -> String {
         match self.state {
             WalletState::Begin => "Begin".to_string(),
@@ -57,12 +62,11 @@ impl Machine for WalletMachine {
         }
     }
 
-    fn transition(&mut self, t: String) -> Result<String, ()> {
+    fn transition(&mut self, t: String) -> Result<String, Error> {
         let ti: WalletTransition = t.into();
         match (&self.state, ti) {
             (WalletState::Begin, WalletTransition::Starting) => Ok(self.to_string()),
-            _ => Err(())
+            _ => Err(Error::TransitionError),
         }
     }
 }
-

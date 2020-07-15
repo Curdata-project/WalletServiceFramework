@@ -1,17 +1,21 @@
-use alloc::string::String;
-use alloc::collections::BTreeMap;
+use crate::error::Error;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
 
 #[derive(Debug)]
 pub struct Event {
     pub id: u64,
+    pub machine: String,
     pub event: String,
 }
 
 pub trait Machine {
     fn to_string(&self) -> String;
 
-    fn transition(&mut self, t: String) -> Result<String, ()>;
+    fn name(&self) -> String;
+
+    fn transition(&mut self, t: String) -> Result<String, Error>;
 }
 
 pub struct MachineManager {
@@ -27,12 +31,17 @@ impl MachineManager {
         }
     }
 
-    pub fn transition(&mut self, id: u64, t: String) -> Result<String, ()> {
-        let m = self.machines.get_mut(&id);
-        if m.is_some() {
-            m.unwrap().transition(t)
+    pub fn transition(&mut self, id: u64, t: String) -> Result<Event, Error> {
+        if let Some(machine) = self.machines.get_mut(&id) {
+            let event = machine.transition(t)?;
+            let name = machine.name();
+            Ok(Event {
+                event,
+                id,
+                machine: name,
+            })
         } else {
-            Err(())
+            Err(Error::NoStateMachine)
         }
     }
 

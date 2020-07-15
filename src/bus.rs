@@ -1,16 +1,15 @@
-use alloc::collections::BTreeMap;
-use serde_json::Value;
-use alloc::string::String;
-use alloc::boxed::Box;
-use crate::MachineManager;
+use crate::Error;
 use crate::Event;
 use crate::Machine;
+use crate::MachineManager;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use serde_json::Value;
 
-pub trait Module{
-    /// 负责传递状态到下一环
+pub trait Module {
     fn event_call(&self, bus: &Bus, event: &Event);
 
-    /// 负责外部状态触发与函数名及可变性的映射
     fn call(&self, method: &str, intput: Value);
 }
 
@@ -22,14 +21,19 @@ pub struct Bus {
 
 impl Bus {
     pub fn new() -> Self {
-        Self{
+        Self {
             mods: BTreeMap::new(),
             priorities: BTreeMap::new(),
             machines: MachineManager::new(),
         }
     }
 
-    pub fn registe_module(mut self, name: String, priority: i32, module: Box<dyn Module + 'static>) -> Self {
+    pub fn registe_module(
+        mut self,
+        name: String,
+        priority: i32,
+        module: Box<dyn Module + 'static>,
+    ) -> Self {
         self.mods.insert(name.clone(), module);
         self.priorities.insert(priority, name);
         self
@@ -48,19 +52,10 @@ impl Bus {
         }
     }
 
-    pub fn transition(&mut self, id: u64, t: String) -> Result<(), ()> {
-        let r = self.machines.transition(id, t);
-        if r.is_ok() {
-            let event = r.unwrap();
-            let e = Event {
-                id,
-                event,
-            };
-            self.event_call(&e);
-            Ok(())
-        } else {
-            Err(())
-        }
+    pub fn transition(&mut self, id: u64, t: String) -> Result<(), Error> {
+        let event = self.machines.transition(id, t)?;
+        self.event_call(&event);
+        Ok(())
     }
 
     pub fn registe_machine(mut self, machine: Box<dyn Machine>) -> Self {
@@ -83,18 +78,21 @@ mod tests {
             let m = bus.get_module("mock").unwrap();
             m.call("asda", Value::default());
         }
-    
+
         fn call(&self, method: &str, _intput: Value) {
             log::info!("call: {}", method);
         }
     }
     #[test]
     fn t() {
-        use env_logger::Env;
-        env_logger::from_env(Env::default().filter("info")).init();
+        let _ = env_logger::builder()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Info)
+            .try_init();
 
         let wallet_state = WalletMachine::default();
-        let mut bus = Bus::new().registe_machine(Box::new(wallet_state))
+        let mut bus = Bus::new()
+            .registe_machine(Box::new(wallet_state))
             .registe_module("mock".to_string(), 1, Box::new(MockModule));
         let r = bus.transition(0, "".to_string());
         log::info!("{:?}", r);

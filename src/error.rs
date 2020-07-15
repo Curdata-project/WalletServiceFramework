@@ -1,15 +1,23 @@
-use jsonrpc_lite::JsonRpc;
-use jsonrpc_lite::{Error as JsonRpcError, ErrorCode as JsonRpcErrorCode};
+use jsonrpc_lite::{Error as JsonRpcError};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::convert::Into;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub enum WallerError {
     // websock 错误
     WebSockServerBindError,
     WebSockServerAcceptConnError,
     WebSockServerGetPeerError,
+
+    ModuleBusNotFound,
+    
+
+    DatabaseOpenError,
+}
+
+#[derive(Serialize)]
+pub enum StateMachineError {
+    StateMachineReset,
 }
 
 impl Into<JsonRpcError> for WallerError {

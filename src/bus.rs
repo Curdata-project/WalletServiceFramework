@@ -5,8 +5,8 @@ use crate::MachineManager;
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::string::String;
-use serde_json::Value;
 use core::cmp::{Ord, Ordering};
+use serde_json::Value;
 
 pub trait Module {
     fn event_call(&self, bus: &Bus, event: &Event) -> Result<(), Error>;
@@ -55,11 +55,7 @@ impl Bus {
         }
     }
 
-    pub fn registe_module(
-        mut self,
-        priority: i32,
-        module: Box<dyn Module + 'static>,
-    ) -> Self {
+    pub fn registe_module(mut self, priority: i32, module: Box<dyn Module + 'static>) -> Self {
         let name = module.name();
         self.mods.insert(name.clone(), module);
         self.priorities.push(PriorityPair(priority, name));
@@ -77,6 +73,8 @@ impl Bus {
 
     pub(crate) fn event_call(&self, event: &Event) -> Result<(), Error> {
         for pp in self.priorities.iter() {
+            log::info!("event_call: {} {:?}", &pp.1, event);
+
             let m = self.mods.get(&pp.1);
             if m.is_some() {
                 m.unwrap().event_call(self, event)?;
@@ -132,7 +130,7 @@ mod tests {
         let mut bus = Bus::new()
             .registe_machine(Box::new(wallet_state))
             .registe_module(1, Box::new(MockModule));
-        let r = bus.transition(0, "".to_string());
+        let r = bus.transition(0, "Starting".to_string());
         log::info!("{:?}", r);
     }
 }

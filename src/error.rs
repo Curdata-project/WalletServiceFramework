@@ -4,5 +4,7 @@ use alloc::string::String;
 pub enum Error {
     NoStateMachine,
     TransitionError,
+    NotMethodCallError,
+
     Other(String),
 }

@@ -1,5 +1,5 @@
 [package]
-name = "currencies"
+name = "test-suit"
 version = "0.1.0"
 authors = ["tiannian <dtiannian@gmail.com>"]
 edition = "2018"
@@ -7,10 +7,16 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "currencies"
+name = "test_suit"
 path = "src/lib.rs"
 
 [dependencies]
+log = "0.4.8"
 wallet-service-framework = { path = ".." }
-log = "0.4.11"
-serde_json = "1.0.56"
+config = { path = "../config" }
+currencies = { path = "../currencies" }
+keypair = { path = "../keypair" }
+transaction = { path = "../transaction" }
+
+[dev-dependencies]
+env_logger = "0.7.1"

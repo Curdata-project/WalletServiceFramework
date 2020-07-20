@@ -17,6 +17,8 @@ members = [
   "currencies",
   "keypair",
   "transaction",
+  "user",
+  "reqwest-cli",
   "test-suit",
 ]
 
@@ -33,4 +35,6 @@ config = { path = "config" }
 currencies = { path = "currencies" }
 keypair = { path = "keypair" }
 transaction = { path = "transaction" }
+user = { path = "user" }
+reqwest-cli = { path = "reqwest-cli" }
 test-suit = { path = "test-suit" }

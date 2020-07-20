@@ -8,7 +8,7 @@ mod models;
 mod schema;
 
 use crate::models::*;
-use crate::schema::currency_store::dsl::currency_store;
+use crate::schema::user_store::dsl::user_store;
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -20,23 +20,20 @@ use std::path::Path;
 use wallet_service_framework::Error as FrameworkError;
 use wallet_service_framework::{Bus, Event, Module};
 
-static CURRENCY_STORE_TABLE: &'static str = r#"
-CREATE TABLE "currency_store" (
-    "id" VARCHAR(255) NOT NULL,
-    "jcurrency" TEXT NOT NULL,
-    "txid" VARCHAR(255) NOT NULL,
+static USER_STORE_TABLE: &'static str = r#"
+CREATE TABLE "user_store" (
+    "uid" VARCHAR(255) NOT NULL,
+    "account" VARCHAR(255) NOT NULL,
     "update_time" TIMESTAMP NOT NULL,
-    "last_owner_id" VARCHAR(255) NOT NULL,
-    "status" INTEGER NOT NULL,
-    PRIMARY KEY ("id")
+    PRIMARY KEY ("uid")
   )
 "#;
 
-pub struct CurrenciesModule {
+pub struct UserModule {
     db_conn: SqliteConnection,
 }
 
-impl CurrenciesModule {
+impl UserModule {
     pub fn new(path: String) -> Result<Self, FrameworkError> {
         Ok(Self {
             db_conn: SqliteConnection::establish(&path)
@@ -45,7 +42,7 @@ impl CurrenciesModule {
     }
 
     fn install_db(&self) -> Result<(), Error> {
-        if let Err(err) = self.db_conn.batch_execute(&CURRENCY_STORE_TABLE) {
+        if let Err(err) = self.db_conn.batch_execute(&USER_STORE_TABLE) {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
@@ -56,7 +53,7 @@ impl CurrenciesModule {
     }
 
     pub fn exists_db(&self) -> bool {
-        match currency_store.limit(1).load::<CurrencyStore>(&self.db_conn) {
+        match user_store.limit(1).load::<UserStore>(&self.db_conn) {
             Ok(_) => true,
             Err(_) => false,
         }
@@ -70,30 +67,10 @@ impl CurrenciesModule {
     }
 }
 
-impl Module for CurrenciesModule {
+impl Module for UserModule {
     fn event_call(&self, bus: &Bus, event: &Event) -> Result<(), FrameworkError> {
         let event: &str = &event.event;
         match event {
-            "Start" => {
-                if self.exists_db() {
-                    unsafe {
-                        let mut_bus = &mut *(bus as *const Bus as *mut Bus);
-                        mut_bus.transition(0, "StoreInitaled".to_string())?;
-                    }
-                } else {
-                    unsafe {
-                        let mut_bus = &mut *(bus as *const Bus as *mut Bus);
-                        mut_bus.transition(0, "EmptyWallet".to_string())?;
-                    }
-                }
-            }
-            "StoreUninital" => unsafe {
-                let self_ = &mut *(self as *const Self as *mut Self);
-                self_.create().unwrap();
-
-                let mut_bus = &mut *(bus as *const Bus as *mut Bus);
-                mut_bus.transition(0, "InitalSuccess".to_string())?;
-            }
             // no care this event, ignore
             _ => return Ok(()),
         }
@@ -108,7 +85,7 @@ impl Module for CurrenciesModule {
     }
 
     fn name(&self) -> String {
-        "currencies".to_string()
+        "user".to_string()
     }
 
     fn version(&self) -> String {

@@ -1,23 +1,36 @@
-use currencies::CurrenciesMgr;
-use wallet_service_framework::{Machine, Bus};
+use currencies::CurrenciesModule;
+use keypair::KeypairModule;
 use wallet_service_framework::states::WalletMachine;
-use keypair::KeypairMgr;
-
+use wallet_service_framework::{Bus, Error as FrameworkError, Machine};
 
 #[test]
 fn test_wallet_sm() {
     let _ = env_logger::builder()
-            .is_test(true)
-            .filter_level(log::LevelFilter::Info)
-            .try_init();
+        .is_test(true)
+        .filter_level(log::LevelFilter::Info)
+        .try_init();
 
     let path = "db_data";
 
-    let wallet_state = WalletMachine::default();
+    // 构建货币管理模块
+    let currencies = match CurrenciesModule::new(path.to_string()) {
+        Ok(currencies) => currencies,
+        Err(err) => panic!("module instance error"),
+    };
+
+    // 构建密钥管理模块
+    let key_pair = match KeypairModule::new(path.to_string()) {
+        Ok(key_pair) => key_pair,
+        Err(err) => panic!("module instance error"),
+    };
+
+    // 启动WalletMachine
     let mut bus = Bus::new()
-        .registe_machine(Box::new(wallet_state))
-        .registe_module(1, Box::new(CurrenciesMgr::new(path.to_string())))
-        .registe_module(1, Box::new(KeypairMgr::new(path.to_string())));
-    let r = bus.transition(0, "Starting".to_string());
-    log::info!("{:?}", r);
+        .registe_machine(Box::new(WalletMachine::default()))
+        .registe_module(1, Box::new(currencies))
+        .registe_module(1, Box::new(key_pair));
+
+    if let Err(err) = bus.transition(0, "Starting".to_string()) {
+        panic!("framework error: {:?}", err);
+    }
 }

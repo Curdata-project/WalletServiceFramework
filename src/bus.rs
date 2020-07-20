@@ -73,8 +73,6 @@ impl Bus {
 
     pub(crate) fn event_call(&self, event: &Event) -> Result<(), Error> {
         for pp in self.priorities.iter() {
-            log::info!("event_call: {} {:?}", &pp.1, event);
-
             let m = self.mods.get(&pp.1);
             if m.is_some() {
                 m.unwrap().event_call(self, event)?;

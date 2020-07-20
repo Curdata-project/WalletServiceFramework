@@ -17,6 +17,8 @@ config = { path = "../config" }
 currencies = { path = "../currencies" }
 keypair = { path = "../keypair" }
 transaction = { path = "../transaction" }
+user = { path = "../user" }
+reqwest-cli = { path = "../reqwest-cli" }
 
 [dev-dependencies]
 env_logger = "0.7.1"

@@ -1,7 +1,8 @@
 
 [workspace]
 members = [
-    "ewf-core"
+    "ewf-core",
+    "mock-module"
 ]
 
 

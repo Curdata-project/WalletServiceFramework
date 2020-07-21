@@ -1,15 +1,6 @@
-use crate::error::Error;
-use crate::message::{Call, Event};
-use async_trait::async_trait;
-use serde_json::Value;
-use actix::prelude::*;
+use std::fmt::Debug;
 
-#[async_trait]
-pub trait Module {
-    fn notify(&self, event: &Event) -> Result<(), Error>;
-
-    async fn call(&mut self, call: Call) -> Result<Value, Error>;
-
+pub trait Module: Debug {
     fn name(&self) -> String;
 
     fn version(&self) -> String;
@@ -18,7 +9,6 @@ pub trait Module {
 // struct OtterModule<T: Module + Sized + Unpin + 'static> {
 //     module: T,
 // }
-
 
 // impl<T: Module + Sized + Unpin + 'static> Actor for OtterModule<T> {
 //     type Context = Context<Self>;

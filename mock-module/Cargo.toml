@@ -1,0 +1,13 @@
+[package]
+name = "mock-module"
+version = "0.1.0"
+authors = ["tiannian <dtiannian@aliyun.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ewf-core = { path = "../ewf-core" }
+actix = "0.10.0-alpha.3"
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+

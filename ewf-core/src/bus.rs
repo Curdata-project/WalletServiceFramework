@@ -1,12 +1,12 @@
+use crate::error::Error;
+use crate::machines::{Machine, MachineManager};
+use crate::message::{Call, Event, Transition};
+use crate::Module;
 use actix::prelude::*;
+use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
-use serde_json::Value;
-
-use crate::error::Error;
-use crate::machines::MachineManager;
-use crate::message::{Transition, Caller, Event, Call};
 
 struct PriorityPair(pub i32, pub String);
 
@@ -47,7 +47,7 @@ impl Bus {
         }
     }
 
-    fn transite(&mut self, msg: Transition) -> Result<(), Error> {
+    pub fn transite(&mut self, msg: Transition) -> Result<(), Error> {
         let event = self.machines.transition(msg.id, msg.transition)?;
         for pp in self.priorities.iter() {
             if let Some(caller) = self.event_caller.get(&pp.1) {
@@ -57,11 +57,36 @@ impl Bus {
         Ok(())
     }
 
-    fn get_caller(&self, module: String) -> Option<&Recipient<Call>> {
+    pub fn get_caller(&self, module: String) -> Option<&Recipient<Call>> {
         self.call_caller.get(&module)
     }
 
+    pub async fn call(&self, module: String, method: String, args: Value) -> Result<Value, Error> {
+        if let Some(recipient) = self.call_caller.get(&module) {
+            let call = Call { method, args };
+            recipient.send(call).await?
+        } else {
+            Err(Error::NoModule)
+        }
+    }
 
+    pub fn module<A>(&mut self, actor: A) -> &mut Self
+    where
+        A: Actor<Context = Context<A>> + Module + Handler<Call> + Handler<Event>,
+    {
+        let name = actor.name();
+        let addr = actor.start();
+        let call_caller = addr.clone().recipient();
+        let event_caller = addr.recipient();
+        self.event_caller.insert(name.clone(), event_caller);
+        self.call_caller.insert(name, call_caller);
+        self
+    }
+
+    pub fn machine<M: Machine + 'static>(&mut self, m: M) -> &mut Self {
+        self.machines.insert(Box::new(m));
+        self
+    }
 }
 
 impl Actor for Bus {
@@ -72,12 +97,5 @@ impl Handler<Transition> for Bus {
     type Result = Result<(), Error>;
     fn handle(&mut self, msg: Transition, _ctx: &mut Context<Self>) -> Self::Result {
         self.transite(msg)
-    }
-}
-
-impl Handler<Caller> for Bus {
-    type Result = Result<Recipient<Call>, Error>;
-    fn handle(&mut self, msg: Caller, _ctx: &mut Context<Self>) -> Self::Result {
-        self.call_caller.get(&msg.module)
     }
 }

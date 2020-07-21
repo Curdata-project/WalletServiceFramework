@@ -7,6 +7,8 @@ use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::string::String;
 use serde_json::Value;
 use core::cmp::{Ord, Ordering};
+use std::sync::mpsc;
+
 
 pub trait Module {
     fn event_call(&self, bus: &Bus, event: &Event) -> Result<(), Error>;
@@ -44,14 +46,20 @@ pub struct Bus {
     mods: BTreeMap<String, Box<dyn Module + 'static>>,
     priorities: BinaryHeap<PriorityPair>,
     machines: MachineManager,
+
+    que_event_in: mpsc::Sender<Event>,
+    que_event_out: mpsc::Receiver<Event>,
 }
 
 impl Bus {
     pub fn new() -> Self {
+        let (sender, receiver) = mpsc::channel();
         Self {
             mods: BTreeMap::new(),
             priorities: BinaryHeap::new(),
             machines: MachineManager::new(),
+            que_event_in: sender,
+            que_event_out: receiver,
         }
     }
 
@@ -75,11 +83,13 @@ impl Bus {
         self.mods.get(name)
     }
 
-    pub(crate) fn event_call(&self, event: &Event) -> Result<(), Error> {
-        for pp in self.priorities.iter() {
-            let m = self.mods.get(&pp.1);
-            if m.is_some() {
-                m.unwrap().event_call(self, event)?;
+    pub(crate) fn run(&self) -> Result<(), Error> {
+        while let Ok(event) = self.que_event_out.recv() {
+            for pp in self.priorities.iter() {
+                let m = self.mods.get(&pp.1);
+                if m.is_some() {
+                    m.unwrap().event_call(self, &event)?;
+                }
             }
         }
         Ok(())
@@ -87,7 +97,9 @@ impl Bus {
 
     pub fn transition(&mut self, id: u64, t: String) -> Result<(), Error> {
         let event = self.machines.transition(id, t)?;
-        self.event_call(&event)?;
+        if let Err(_) = self.que_event_in.send(event) {
+            log::error!("bus recv half has close");
+        }
         Ok(())
     }
 }

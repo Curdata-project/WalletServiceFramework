@@ -1,14 +1,8 @@
 use crate::error::Error;
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
-use alloc::string::String;
+use std::boxed::Box;
+use std::collections::BTreeMap;
 
-#[derive(Debug)]
-pub struct Event {
-    pub id: u64,
-    pub machine: String,
-    pub event: String,
-}
+use crate::message::Event;
 
 pub trait Machine {
     fn to_string(&self) -> String;

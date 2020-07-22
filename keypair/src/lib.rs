@@ -19,8 +19,8 @@ use hex::{FromHex, ToHex};
 use kv_object::sm2::{CertificateSm2, KeyPairSm2};
 use serde_json::{json, Value};
 use std::path::Path;
-use wallet_service_framework::Error as FrameworkError;
-use wallet_service_framework::{Bus, Event, Module};
+use ewf_core::error::Error as FrameworkError;
+use ewf_core::{Bus, Event, Module};
 
 static KEYPAIR_STORE_TABLE: &'static str = r#"
 CREATE TABLE "keypair_store" (

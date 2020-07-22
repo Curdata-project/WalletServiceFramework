@@ -40,7 +40,6 @@ impl ReqwestCli {
             Method::Post => http::Method::POST,
         };
 
-        // 考虑reuse
         return match reqwest::Client::new()
             .request(http::Method::POST, &req.url)
             .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))

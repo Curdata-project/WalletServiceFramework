@@ -17,8 +17,8 @@ use dislog_hal::Bytes;
 use hex::{FromHex, ToHex};
 use serde_json::{json, Value};
 use std::path::Path;
-use wallet_service_framework::Error as FrameworkError;
-use wallet_service_framework::{Bus, Event, Module};
+use ewf_core::error::Error as FrameworkError;
+use ewf_core::{Bus, Event, Module};
 
 static CURRENCY_STORE_TABLE: &'static str = r#"
 CREATE TABLE "currency_store" (
@@ -70,8 +70,26 @@ impl CurrenciesModule {
     }
 }
 
-impl Module for CurrenciesModule {
-    fn event_call(&self, bus: &Bus, event: &Event) -> Result<(), FrameworkError> {
+pub struct CurrenciesModule {
+    pub bus: &'static Bus,
+}
+
+impl Actor for CurrenciesModule {
+    type Context = Context<Self>;
+}
+
+impl Handler<Call> for CurrenciesModule {
+    type Result = Result<Value, FrameworkError>;
+    fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
+        match method {
+            _ => Err(FrameworkError::MethodNotFoundError),
+        }
+    }
+}
+
+impl Handler<Event> for CurrenciesModule {
+    type Result = Result<(), FrameworkError>;
+    fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let event: &str = &event.event;
         match event {
             "Start" => {
@@ -100,13 +118,9 @@ impl Module for CurrenciesModule {
 
         Ok(())
     }
+}
 
-    fn call(&self, method: &str, _intput: Value) -> Result<Value, FrameworkError> {
-        match method {
-            _ => Err(FrameworkError::MethodNotFoundError),
-        }
-    }
-
+impl Module for CurrenciesModule {
     fn name(&self) -> String {
         "currencies".to_string()
     }

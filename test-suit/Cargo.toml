@@ -12,7 +12,6 @@ path = "src/lib.rs"
 
 [dependencies]
 log = "0.4.8"
-wallet-service-framework = { path = ".." }
 config = { path = "../config" }
 currencies = { path = "../currencies" }
 keypair = { path = "../keypair" }

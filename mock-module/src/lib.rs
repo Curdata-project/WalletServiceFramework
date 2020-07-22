@@ -11,14 +11,11 @@ impl Actor for MockModule {
     type Context = Context<Self>;
 }
 
-impl Handler<Call> for MockModule
-where
-    Self: 'static,
-{
-    type Result = ResponseFuture<Result<Value, Error>>;
+impl Handler<Call> for MockModule {
+    type Result = Result<Value, Error>;
     fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         println!("recv call");
-        Box::pin(async move { _msg.test().await })
+        Ok(Value::default())
     }
 }
 

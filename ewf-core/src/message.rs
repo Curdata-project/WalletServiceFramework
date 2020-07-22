@@ -1,5 +1,4 @@
 use crate::error::Error;
-use crate::Module;
 use actix::prelude::*;
 use serde_json::Value;
 

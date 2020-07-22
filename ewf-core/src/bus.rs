@@ -1,12 +1,12 @@
 use crate::error::Error;
 use crate::machines::{Machine, MachineManager};
-use crate::message::{Call, Event, Transition};
+use crate::message::{Call, CallQuery, Event, Transition};
 use crate::Module;
 use actix::prelude::*;
-use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
+use std::fmt::{self, Debug, Formatter};
 
 struct PriorityPair(pub i32, pub String);
 
@@ -35,6 +35,22 @@ pub struct Bus {
     call_caller: HashMap<String, Recipient<Call>>,
     event_caller: HashMap<String, Recipient<Event>>,
     priorities: BinaryHeap<PriorityPair>,
+    addr: Option<Addr<Self>>,
+}
+
+impl Actor for Bus {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        println!("Actor is alive");
+        self.addr = Some(ctx.address())
+    }
+}
+
+impl Debug for Bus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("bus"))
+    }
 }
 
 impl Bus {
@@ -44,14 +60,21 @@ impl Bus {
             call_caller: HashMap::new(),
             event_caller: HashMap::new(),
             priorities: BinaryHeap::new(),
+            addr: None,
         }
     }
 
     pub fn transite(&mut self, msg: Transition) -> Result<(), Error> {
-        let event = self.machines.transition(msg.id, msg.transition)?;
+        let (id, machine, event) = self.machines.transition(msg.id, msg.transition)?;
+        let addr = self.addr.as_ref().unwrap();
         for pp in self.priorities.iter() {
             if let Some(caller) = self.event_caller.get(&pp.1) {
-                caller.do_send(event.clone())?;
+                caller.do_send(Event {
+                    id,
+                    machine: machine.clone(),
+                    event: event.clone(),
+                    addr: addr.clone(),
+                })?;
             }
         }
         Ok(())
@@ -59,15 +82,6 @@ impl Bus {
 
     pub fn get_caller(&self, module: String) -> Option<&Recipient<Call>> {
         self.call_caller.get(&module)
-    }
-
-    pub async fn call(&self, module: String, method: String, args: Value) -> Result<Value, Error> {
-        if let Some(recipient) = self.call_caller.get(&module) {
-            let call = Call { method, args };
-            recipient.send(call).await?
-        } else {
-            Err(Error::NoModule)
-        }
     }
 
     pub fn module<A>(&mut self, actor: A) -> &mut Self
@@ -89,13 +103,20 @@ impl Bus {
     }
 }
 
-impl Actor for Bus {
-    type Context = Context<Self>;
-}
-
 impl Handler<Transition> for Bus {
     type Result = Result<(), Error>;
     fn handle(&mut self, msg: Transition, _ctx: &mut Context<Self>) -> Self::Result {
         self.transite(msg)
+    }
+}
+
+impl Handler<CallQuery> for Bus {
+    type Result = Result<Recipient<Call>, Error>;
+    fn handle(&mut self, msg: CallQuery, _ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(recipient) = self.call_caller.get(&msg.module) {
+            Ok(recipient.clone())
+        } else {
+            Err(Error::NoModule)
+        }
     }
 }

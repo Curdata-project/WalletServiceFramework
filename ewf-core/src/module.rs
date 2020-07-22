@@ -1,6 +1,8 @@
+use crate::message::{Call, Event};
+use actix::prelude::*;
 use std::fmt::Debug;
 
-pub trait Module: Debug {
+pub trait Module: Debug + Actor + Handler<Call> + Handler<Event> {
     fn name(&self) -> String;
 
     fn version(&self) -> String;

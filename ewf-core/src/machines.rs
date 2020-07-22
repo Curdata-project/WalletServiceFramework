@@ -25,15 +25,11 @@ impl MachineManager {
         }
     }
 
-    pub fn transition(&mut self, id: u64, t: String) -> Result<Event, Error> {
+    pub fn transition(&mut self, id: u64, t: String) -> Result<(u64, String, String), Error> {
         if let Some(machine) = self.machines.get_mut(&id) {
             let event = machine.transition(t)?;
             let name = machine.name();
-            Ok(Event {
-                event,
-                id,
-                machine: name,
-            })
+            Ok((id, name, event))
         } else {
             Err(Error::NoStateMachine)
         }

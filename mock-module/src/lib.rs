@@ -1,21 +1,26 @@
 use actix::prelude::*;
-use ewf_core::{error::Error, Bus, Call, Event, Module};
+use ewf_core::message::CallQuery;
+use ewf_core::{error::Error, Call, Event, Module};
 use serde_json::Value;
 use std::fmt::{self, Debug, Formatter};
 
-pub struct MockModule {
-    pub bus: &'static Bus,
-}
+pub struct MockModule;
 
 impl Actor for MockModule {
     type Context = Context<Self>;
 }
 
 impl Handler<Call> for MockModule {
-    type Result = Result<Value, Error>;
+    type Result = ResponseFuture<Result<Value, Error>>;
     fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
-        println!("recv call");
-        Ok(Value::default())
+        Box::pin(async move {
+            let query = CallQuery {
+                module: "mock-module".to_string(),
+            };
+            let _caller = _msg.addr.send(query).await;
+            println!("recv call");
+            Ok(Value::default())
+        })
     }
 }
 

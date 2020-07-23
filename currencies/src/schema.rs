@@ -5,6 +5,6 @@ table! {
         txid -> Text,
         update_time -> Timestamp,
         last_owner_id -> Text,
-        status -> Integer,
+        status -> SmallInt,
     }
 }

@@ -4,6 +4,9 @@ use actix::prelude::*;
 pub enum Error {
     NoStateMachine,
     NoModule,
+    ModuleInstanceError,
+    MethodNotFoundError,
+
     OtherError(String),
     ActixError(String),
 }

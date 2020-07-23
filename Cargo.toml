@@ -2,7 +2,8 @@
 [workspace]
 members = [
     "ewf-core",
-    "mock-module"
+    "mock-module",
+    "currencies"
 ]
 
 

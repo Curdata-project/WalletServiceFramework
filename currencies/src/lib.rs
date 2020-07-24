@@ -129,7 +129,9 @@ impl CurrenciesModule {
         let affect_rows = diesel::insert_into(currency_store)
             .values(new_currency)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                println!("{:?}", err);
+                Error::DatabaseInsertError})?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -285,9 +287,7 @@ impl CurrenciesModule {
 impl Actor for CurrenciesModule {
     type Context = Context<Self>;
 
-    fn started(&mut self, ctx: &mut Context<Self>) {
-        
-    }
+    fn started(&mut self, ctx: &mut Context<Self>) {}
 }
 
 impl Handler<Call> for CurrenciesModule {
@@ -409,6 +409,11 @@ mod tests {
     use super::*;
     use ewf_core::states::WalletMachine;
     use ewf_core::{Bus, Transition};
+    use crate::schema::currency_store::dsl::{self, currency_store};
+
+    const CURRENCY_EXAMPLE: &'static str = "0303534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67e70f0af45c6106766d5c983f3942747b779406c328aede49ae4d98f6790287b9ed04e53bdde5d226a8635d0151d370fd7ba9901fccf994076946673883b273f330203534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67e9fe439d0e7d635d009387b60c320780ef303c61edf613222465b1f4f86805c42a63cdb945e2845f7eaec1e5ff8dda8115852875816dc4d33bcc572607a6de3d4343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98c3b0b27e730100000a0000000000000003534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67e18ee7102187a30d9aff17ba95d6a7f7994e444a841fb5bc7f3698459089d8b3603659ae6afd520c54c48e58e96378b181acd4cd14a096150281696f641a145864c";
+
+    const TRANSACTION_EXAMPLE: &'static str = "0603659ae6afd520c54c48e58e96378b181acd4cd14a096150281696f641a145864c129d6e944d589777142973d06a81e170c2ca54ea42115970d26a9b85616c1f38ed3a73f180fb885e4ccf7f8c87bd455e71a8a59cbd893d299bcda458e28bb3f62ac50654f4f7381d394c0c110f8d3e18423c3cdd01327eb0322d1683de165ea00366ad51a3bf44ee15f4c8b278b0b695a3bfc2c56602cb647cdd77867a8ae920190303534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67eafea4a289ae687a053d11c4d9f0dc815e2ff54fe088970d3f4895020e06c7f9bc42dcc15db18188e96f5ddf0dcbc8367e7c733019c1806216be9904d2132bd610203534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67ecb65c7349b6f5922b211104e34b7e444c662db98bcbf3f3595d085c8d5255ac0e0180cdee9776829c3a0788ed96301d29501b1e16ed5ff5b5f4319a69727ad53c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e5493be7e73010000102700000000000003534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67e4777110021bb7cde155743e2cc0c60ba3561295f79a6a4b63b42d5bfd5144c1903659ae6afd520c54c48e58e96378b181acd4cd14a096150281696f641a145864c";
 
     #[actix_rt::test]
     async fn test_currencies_mod() {
@@ -429,5 +434,38 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+    }
+    
+    #[test]
+    fn test_currencies_func() {
+        let pool = Pool::new(ConnectionManager::new("db_data"))
+            .map_err(|_| EwfError::ModuleInstanceError)
+            .unwrap();
+        let db_conn = pool.get().unwrap();
+
+        diesel::delete(currency_store)
+            .execute(&db_conn).unwrap();
+
+        let currency =
+            DigitalCurrencyWrapper::from_bytes(&Vec::<u8>::from_hex(&CURRENCY_EXAMPLE).unwrap())
+                .unwrap();
+        let ans = CurrenciesModule::add_avail_currency(&db_conn, &currency, &"zxzxc", "shen");
+        assert_eq!(ans.is_ok(), true);
+
+        let transaction =
+            TransactionWrapper::from_bytes(&Vec::<u8>::from_hex(&TRANSACTION_EXAMPLE).unwrap())
+                .unwrap();
+        let ans = CurrenciesModule::add_transaction(&db_conn, &transaction, &"zxzxc", "shen");
+        assert_eq!(ans.is_ok(), true);
+
+        let ans = CurrenciesModule::find_currency_by_id(&db_conn, &"343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98");
+        assert_eq!(ans.is_ok(), true);
+        let ans = CurrenciesModule::find_currency_by_id(&db_conn, &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e");
+        assert_eq!(ans.is_err(), true);
+
+        let ans = CurrenciesModule::find_transaction_by_id(&db_conn, &"343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98");
+        assert_eq!(ans.is_err(), true);
+        let ans = CurrenciesModule::find_transaction_by_id(&db_conn, &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e");
+        assert_eq!(ans.is_ok(), true);
     }
 }

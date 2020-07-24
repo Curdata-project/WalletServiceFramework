@@ -34,7 +34,7 @@ pub struct Bus {
     machines: MachineManager,
     call_caller: HashMap<String, Recipient<Call>>,
     event_caller: HashMap<String, Recipient<Event>>,
-    priorities: BinaryHeap<PriorityPair>,
+    priorities: Vec<PriorityPair>,
     addr: Option<Addr<Self>>,
 }
 
@@ -42,7 +42,7 @@ impl Actor for Bus {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
-        println!("Actor is alive");
+        self.priorities.sort();
         self.addr = Some(ctx.address())
     }
 }
@@ -59,7 +59,7 @@ impl Bus {
             machines: MachineManager::new(),
             call_caller: HashMap::new(),
             event_caller: HashMap::new(),
-            priorities: BinaryHeap::new(),
+            priorities: Vec::new(),
             addr: None,
         }
     }
@@ -84,7 +84,7 @@ impl Bus {
         self.call_caller.get(&module)
     }
 
-    pub fn module<A>(&mut self, actor: A) -> &mut Self
+    pub fn module<A>(&mut self, priority: i32, actor: A) -> &mut Self
     where
         A: Actor<Context = Context<A>> + Module + Handler<Call> + Handler<Event>,
     {
@@ -93,7 +93,8 @@ impl Bus {
         let call_caller = addr.clone().recipient();
         let event_caller = addr.recipient();
         self.event_caller.insert(name.clone(), event_caller);
-        self.call_caller.insert(name, call_caller);
+        self.call_caller.insert(name.clone(), call_caller);
+        self.priorities.push(PriorityPair(priority, name));
         self
     }
 

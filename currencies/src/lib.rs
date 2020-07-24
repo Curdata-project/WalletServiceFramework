@@ -1,8 +1,5 @@
 #![feature(async_closure)]
 
-#[macro_use]
-extern crate lazy_static;
-
 mod error;
 pub use error::Error;
 
@@ -40,7 +37,7 @@ type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 static CURRENCY_STORE_TABLE: &'static str = r#"
 CREATE TABLE "currency_store" (
     "id" VARCHAR(255) NOT NULL,
-    "jcurrency" VARCHAR(1024) NOT NULL,
+    "currency" TEXT NOT NULL,
     "txid" VARCHAR(255) NOT NULL,
     "update_time" TIMESTAMP NOT NULL,
     "last_owner_id" VARCHAR(255) NOT NULL,
@@ -131,7 +128,8 @@ impl CurrenciesModule {
             .execute(db_conn)
             .map_err(|err| {
                 println!("{:?}", err);
-                Error::DatabaseInsertError})?;
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -169,7 +167,7 @@ impl CurrenciesModule {
                 .filter(dsl::status.eq(CurrencyStatus::Lock.to_int())),
         )
         .set((
-            dsl::jcurrency.eq(currency_str),
+            dsl::currency.eq(currency_str),
             dsl::status.eq(CurrencyStatus::Avail.to_int()),
         ))
         .execute(db_conn)
@@ -200,7 +198,7 @@ impl CurrenciesModule {
 
         let new_currency_store = NewCurrencyStore {
             id: &quota_id,
-            jcurrency: &currency_str,
+            currency: &currency_str,
             txid: &txid,
             update_time: &timestamp,
             last_owner_id,
@@ -233,7 +231,7 @@ impl CurrenciesModule {
 
         let new_currency_store = NewCurrencyStore {
             id: &quota_id,
-            jcurrency: &transaction_str,
+            currency: &transaction_str,
             txid: &txid,
             update_time: &timestamp,
             last_owner_id,
@@ -256,7 +254,7 @@ impl CurrenciesModule {
             .map_err(|_| Error::CurrencyByidNotFound)?;
 
         let ret = DigitalCurrencyWrapper::from_bytes(
-            &Vec::<u8>::from_hex(&currency.jcurrency)
+            &Vec::<u8>::from_hex(&currency.currency)
                 .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
         )
         .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
@@ -275,7 +273,7 @@ impl CurrenciesModule {
             .map_err(|_| Error::CurrencyByidNotFound)?;
 
         let ret = TransactionWrapper::from_bytes(
-            &Vec::<u8>::from_hex(&currency.jcurrency)
+            &Vec::<u8>::from_hex(&currency.currency)
                 .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
         )
         .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
@@ -407,9 +405,9 @@ impl Module for CurrenciesModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::currency_store::dsl::{self, currency_store};
     use ewf_core::states::WalletMachine;
     use ewf_core::{Bus, Transition};
-    use crate::schema::currency_store::dsl::{self, currency_store};
 
     const CURRENCY_EXAMPLE: &'static str = "0303534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67e70f0af45c6106766d5c983f3942747b779406c328aede49ae4d98f6790287b9ed04e53bdde5d226a8635d0151d370fd7ba9901fccf994076946673883b273f330203534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67e9fe439d0e7d635d009387b60c320780ef303c61edf613222465b1f4f86805c42a63cdb945e2845f7eaec1e5ff8dda8115852875816dc4d33bcc572607a6de3d4343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98c3b0b27e730100000a0000000000000003534a8cf8a3b0a3a31cba80c07ee6a5a1cf518b6b7588802787f13a55e32fc67e18ee7102187a30d9aff17ba95d6a7f7994e444a841fb5bc7f3698459089d8b3603659ae6afd520c54c48e58e96378b181acd4cd14a096150281696f641a145864c";
 
@@ -435,7 +433,7 @@ mod tests {
         .unwrap()
         .unwrap();
     }
-    
+
     #[test]
     fn test_currencies_func() {
         let pool = Pool::new(ConnectionManager::new("db_data"))
@@ -443,8 +441,8 @@ mod tests {
             .unwrap();
         let db_conn = pool.get().unwrap();
 
-        diesel::delete(currency_store)
-            .execute(&db_conn).unwrap();
+        CurrenciesModule::create(&db_conn);
+        diesel::delete(currency_store).execute(&db_conn).unwrap();
 
         let currency =
             DigitalCurrencyWrapper::from_bytes(&Vec::<u8>::from_hex(&CURRENCY_EXAMPLE).unwrap())
@@ -458,14 +456,26 @@ mod tests {
         let ans = CurrenciesModule::add_transaction(&db_conn, &transaction, &"zxzxc", "shen");
         assert_eq!(ans.is_ok(), true);
 
-        let ans = CurrenciesModule::find_currency_by_id(&db_conn, &"343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98");
+        let ans = CurrenciesModule::find_currency_by_id(
+            &db_conn,
+            &"343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98",
+        );
         assert_eq!(ans.is_ok(), true);
-        let ans = CurrenciesModule::find_currency_by_id(&db_conn, &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e");
+        let ans = CurrenciesModule::find_currency_by_id(
+            &db_conn,
+            &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e",
+        );
         assert_eq!(ans.is_err(), true);
 
-        let ans = CurrenciesModule::find_transaction_by_id(&db_conn, &"343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98");
+        let ans = CurrenciesModule::find_transaction_by_id(
+            &db_conn,
+            &"343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98",
+        );
         assert_eq!(ans.is_err(), true);
-        let ans = CurrenciesModule::find_transaction_by_id(&db_conn, &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e");
+        let ans = CurrenciesModule::find_transaction_by_id(
+            &db_conn,
+            &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e",
+        );
         assert_eq!(ans.is_ok(), true);
     }
 }

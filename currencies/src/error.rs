@@ -1,6 +1,8 @@
 use ewf_core::error::Error as EwfError;
+use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Error {
     DatabaseConnectError,
     DatabaseExistsInstallError,
@@ -8,9 +10,11 @@ pub enum Error {
     DatabaseSelectError,
     DatabaseInsertError,
     DatabaseDeleteError,
+    DatabaseJsonDeSerializeError,
 
     CurrencyUnlockError,
     ParamDeSerializeError,
+    CurrencyByidNotFound,
 }
 
 impl Error {
@@ -22,9 +26,11 @@ impl Error {
             Error::DatabaseSelectError => "DatabaseSelectError".to_string(),
             Error::DatabaseInsertError => "DatabaseInsertError".to_string(),
             Error::DatabaseDeleteError => "DatabaseDeleteError".to_string(),
+            Error::DatabaseJsonDeSerializeError => "DatabaseJsonDeSerializeError".to_string(),
 
             Error::CurrencyUnlockError => "CurrencyUnlockError".to_string(),
             Error::ParamDeSerializeError => "ParamDeSerializeError".to_string(),
+            Error::CurrencyByidNotFound => "CurrencyByidNotFound".to_string(),
         })
     }
 }

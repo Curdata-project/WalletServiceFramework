@@ -27,7 +27,7 @@ use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
 use ewf_core::{Bus, Call, Event, Module, Transition};
-use hex::ToHex;
+use hex::{FromHex, ToHex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
@@ -55,7 +55,7 @@ pub enum CurrencyStatus {
 }
 
 impl CurrencyStatus {
-    pub fn to_ewf_error(self) -> i16 {
+    pub fn to_int(self) -> i16 {
         match self {
             CurrencyStatus::Avail => 0,
             CurrencyStatus::Lock => 1,
@@ -84,21 +84,19 @@ pub struct AddTransactionParam {
 
 pub struct CurrenciesModule {
     pool: LocalPool,
-    pub bus: &'static Bus,
 }
 
 impl fmt::Debug for CurrenciesModule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("{{ pool: ..., bus: {:?} }}", self.bus))
+        f.write_fmt(format_args!("{{ {} {} }}", self.name(), self.version()))
     }
 }
 
 impl CurrenciesModule {
-    pub fn new(path: String, bus: &'static Bus) -> Result<Self, EwfError> {
+    pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
             pool: Pool::new(ConnectionManager::new(&path))
                 .map_err(|_| EwfError::ModuleInstanceError)?,
-            bus,
         })
     }
 
@@ -154,7 +152,7 @@ impl CurrenciesModule {
         db_conn: &SqliteConnection,
         currency: &DigitalCurrencyWrapper,
     ) -> Result<(), Error> {
-        let currency_id = currency
+        let quota_id = currency
             .get_body()
             .get_quota_info()
             .get_body()
@@ -165,12 +163,12 @@ impl CurrenciesModule {
 
         let affect_rows = diesel::update(
             currency_store
-                .find(currency_id)
-                .filter(dsl::status.eq(CurrencyStatus::Lock.to_ewf_error())),
+                .find(quota_id)
+                .filter(dsl::status.eq(CurrencyStatus::Lock.to_int())),
         )
         .set((
             dsl::jcurrency.eq(currency_str),
-            dsl::status.eq(CurrencyStatus::Avail.to_ewf_error()),
+            dsl::status.eq(CurrencyStatus::Avail.to_int()),
         ))
         .execute(db_conn)
         .map_err(|_| Error::CurrencyUnlockError)?;
@@ -204,7 +202,7 @@ impl CurrenciesModule {
             txid: &txid,
             update_time: &timestamp,
             last_owner_id,
-            status: CurrencyStatus::Avail.to_ewf_error(),
+            status: CurrencyStatus::Avail.to_int(),
         };
 
         Self::insert(db_conn, &new_currency_store)?;
@@ -237,17 +235,59 @@ impl CurrenciesModule {
             txid: &txid,
             update_time: &timestamp,
             last_owner_id,
-            status: CurrencyStatus::Lock.to_ewf_error(),
+            status: CurrencyStatus::Lock.to_int(),
         };
 
         Self::insert(db_conn, &new_currency_store)?;
 
         Ok(())
     }
+
+    fn find_currency_by_id(
+        db_conn: &SqliteConnection,
+        quota_id: &str,
+    ) -> Result<DigitalCurrencyWrapper, Error> {
+        let currency = currency_store
+            .find(quota_id)
+            .filter(dsl::status.eq(CurrencyStatus::Avail.to_int()))
+            .first::<CurrencyStore>(db_conn)
+            .map_err(|_| Error::CurrencyByidNotFound)?;
+
+        let ret = DigitalCurrencyWrapper::from_bytes(
+            &Vec::<u8>::from_hex(&currency.jcurrency)
+                .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
+        )
+        .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
+
+        Ok(ret)
+    }
+
+    fn find_transaction_by_id(
+        db_conn: &SqliteConnection,
+        quota_id: &str,
+    ) -> Result<TransactionWrapper, Error> {
+        let currency = currency_store
+            .find(quota_id)
+            .filter(dsl::status.eq(CurrencyStatus::Lock.to_int()))
+            .first::<CurrencyStore>(db_conn)
+            .map_err(|_| Error::CurrencyByidNotFound)?;
+
+        let ret = TransactionWrapper::from_bytes(
+            &Vec::<u8>::from_hex(&currency.jcurrency)
+                .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
+        )
+        .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
+
+        Ok(ret)
+    }
 }
 
 impl Actor for CurrenciesModule {
     type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        
+    }
 }
 
 impl Handler<Call> for CurrenciesModule {
@@ -294,6 +334,22 @@ impl Handler<Call> for CurrenciesModule {
                     )
                     .map_err(|err| err.to_ewf_error())?)
                 }
+                "find_currency_by_id" => {
+                    let param: String = match serde_json::from_value(_msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(Error::ParamDeSerializeError.to_ewf_error()),
+                    };
+                    json!(Self::find_currency_by_id(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "find_transaction_by_id" => {
+                    let param: String = match serde_json::from_value(_msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(Error::ParamDeSerializeError.to_ewf_error()),
+                    };
+                    json!(Self::find_transaction_by_id(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
                 _ => return Err(EwfError::MethodNotFoundError),
             };
 
@@ -314,20 +370,20 @@ impl Handler<Event> for CurrenciesModule {
             let bus = _msg.addr;
             let event: &str = &_msg.event;
             match event {
-                "Starting" => {
+                "Start" => {
                     if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
+                        bus.send(Transition {
+                            id,
+                            transition: "InitalSuccess".to_string(),
+                        })
+                        .await??;
+                    } else {
                         bus.send(Transition {
                             id,
                             transition: "InitalFail".to_string(),
                         })
                         .await??;
                     }
-
-                    bus.send(Transition {
-                        id,
-                        transition: "InitalSuccess".to_string(),
-                    })
-                    .await??;
                 }
                 // no care this event, ignore
                 _ => return Ok(()),
@@ -350,29 +406,28 @@ impl Module for CurrenciesModule {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
+    use ewf_core::states::WalletMachine;
     use ewf_core::{Bus, Transition};
-    use tokio::runtime::Runtime;
 
-    lazy_static! {
-        static ref wallet_bus: Bus = Bus::new();
-    }
+    #[actix_rt::test]
+    async fn test_currencies_mod() {
+        let mut wallet_bus: Bus = Bus::new();
 
-    #[test]
-    fn test_currencies_mod() {
-        let rt = Runtime::new().unwrap();
+        let currencies = CurrenciesModule::new("db_data".to_string()).unwrap();
 
-        let currencies = CurrenciesModule::new("db_data".to_string(), &wallet_bus).unwrap();
-
-        wallet_bus.module(currencies);
+        wallet_bus
+            .machine(WalletMachine::default())
+            .module(1, currencies);
 
         let addr = wallet_bus.start();
-        rt.block_on( async move{
-            addr.send(Transition {
-                id: 0,
-                transition: "Starting".to_string(),
-            }).await.unwrap();
-        });
+
+        addr.send(Transition {
+            id: 0,
+            transition: "Starting".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
     }
 }

@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 
 mod error;
 pub use error::Error;
@@ -124,6 +123,11 @@ impl CurrenciesModule {
         })
     }
 
+    /// 安装数据表
+    /// 
+    /// 异常信息
+    ///     DatabaseExistsInstallError 表已存在导致失败，一般无需关注
+    ///     DatabaseInstallError 其他原因建表失败
     fn install_db(db_conn: &SqliteConnection) -> Result<(), Error> {
         if let Err(err) = db_conn.batch_execute(&CURRENCY_STORE_TABLE) {
             if err.to_string().contains("already exists") {
@@ -135,6 +139,7 @@ impl CurrenciesModule {
         Ok(())
     }
 
+    /// 检查数据表存在与否
     fn exists_db(db_conn: &SqliteConnection) -> bool {
         match currency_store.limit(1).load::<CurrencyStore>(db_conn) {
             Ok(_) => true,
@@ -142,6 +147,7 @@ impl CurrenciesModule {
         }
     }
 
+    /// 创建数据表
     fn create(db_conn: &SqliteConnection) -> Result<(), Error> {
         if let Err(Error::DatabaseInstallError) = Self::install_db(db_conn) {
             return Err(Error::DatabaseInstallError);
@@ -149,6 +155,7 @@ impl CurrenciesModule {
         Ok(())
     }
 
+    /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_currency: &NewCurrencyStore) -> Result<(), Error> {
         let affect_rows = diesel::insert_into(currency_store)
             .values(new_currency)
@@ -161,6 +168,7 @@ impl CurrenciesModule {
         Ok(())
     }
 
+    /// 删除表格式数据
     fn delete(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(currency_store.find(id))
             .execute(db_conn)
@@ -172,6 +180,11 @@ impl CurrenciesModule {
         Ok(())
     }
 
+    /// 模块对外接口
+    /// 解锁货币
+    ///     传入货币发行机构新发行的货币
+    /// 异常信息
+    ///     CurrencyUnlockError 货币不存在或重复解锁导致失败
     fn unlock_currency(
         db_conn: &SqliteConnection,
         currency: &DigitalCurrencyWrapper,
@@ -203,6 +216,11 @@ impl CurrenciesModule {
         Ok(())
     }
 
+    /// 模块对外接口
+    /// 添加货币到模块
+    ///     传入（货币，交易ID，交易对手方ID）
+    /// 异常信息
+    ///     DatabaseInsertError 货币已存在
     fn add_currency(db_conn: &SqliteConnection, entity: &AddCurrencyParam) -> Result<(), Error> {
         let (quota_id, currency_str, txid, last_owner_id, status) = match entity {
             AddCurrencyParam::AvailEntity {
@@ -265,6 +283,12 @@ impl CurrenciesModule {
         Ok(())
     }
 
+    /// 模块对外接口
+    /// 查找货币
+    ///     传入额度控制位ID
+    /// 异常信息
+    ///     CurrencyByidNotFound 货币未找到
+    ///     DatabaseJsonDeSerializeError 意外错误，由错误逻辑导致
     fn find_currency_by_id(
         db_conn: &SqliteConnection,
         quota_id: &str,

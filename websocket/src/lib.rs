@@ -1,35 +1,21 @@
 mod error;
-mod currencies;
 
-use serde_json::Value;
-use jsonrpc_core::route::Route;
-use jsonrpc_lite::Error as JsonRpcError;
-use jsonrpc_websocket::WsServer;
-use serde::{Deserialize, Serialize};
-use std::env;
+mod server;
+
+use serde_json::{Value, json};
 use std::fmt;
-use std::sync::{Arc, RwLock};
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Call, Event, Module, Transition, CallQuery};
+use ewf_core::{Call, Event, Module, CallQuery, Bus, StartNotify};
 
-use crate::currencies::{self as currencies_s, CurrencyResource};
+use crate::server::WSServer;
 
 
 pub struct WebSocketModule{
     bind_transport: String,
+    bus_addr: Option<Addr<Bus>>,
 }
-
-impl WebSocketModule {
-    pub fn new(bind_transport: String) -> Self {
-        Self{
-            bind_transport
-        }
-    }
-}
-
-
 
 impl Actor for WebSocketModule {
     type Context = Context<Self>;
@@ -42,9 +28,21 @@ impl Actor for WebSocketModule {
 impl Handler<Call> for WebSocketModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
     fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
+        let bus_addr = self.bus_addr.clone().unwrap();
         Box::pin(async move {
-            
-            Ok(Value::default())
+            let mut split_iter = _msg.method.split(|c| c == '.');
+            let mod_name = match split_iter.nth(0){
+                Some(mod_name) => mod_name.to_string(),
+                None => return Err(EwfError::MethodNotFoundError),
+            };
+            let method = match split_iter.nth(1){
+                Some(method) => method.to_string(),
+                None => return Err(EwfError::MethodNotFoundError),
+            };
+
+            let module = bus_addr.send(CallQuery{module: mod_name}).await??;
+
+            module.send(Call{method: method, args: _msg.args}).await?
         })
     }
 }
@@ -54,23 +52,17 @@ impl Handler<Event> for WebSocketModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let bind_transport = self.bind_transport.clone();
+        let self_addr = _ctx.address();
 
         Box::pin(async move {
             let event: &str = &_msg.event;
+            let id = _msg.id;
             match event {
                 "Start" => {
-                    let currencies: Recipient<Call> = _msg.addr.send(CallQuery{module: "currencies".to_string()}).await??;
-
-                    tokio::spawn(async move {
-                        let route: Arc<Route> = Arc::new(
-                            Route::new()
-                                .data(CurrencyResource::new(currencies))
-                                .to("currency.ids.detail".to_string(), currencies_s::get_detail_by_ids),
-                        );
-
-                        match WsServer::bind(bind_transport).await {
-                            Ok(ws_server) => ws_server.listen_loop(route).await,
-                            Err(err) => log::error!("{:?}", err),
+                    actix::spawn(async move {
+                        match WSServer::bind(bind_transport).await {
+                            Ok(ws_server) => ws_server.listen_loop(self_addr).await,
+                            Err(err) => panic!("{:?}", err),
                         }
                     });
                 }
@@ -83,9 +75,18 @@ impl Handler<Event> for WebSocketModule {
     }
 }
 
+
+impl Handler<StartNotify> for WebSocketModule {
+    type Result = ();
+    fn handle(&mut self, _msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
+        self.bus_addr = Some(_msg.addr);
+    }
+}
+
+
 impl fmt::Debug for WebSocketModule {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_fmt(format_args!("{{ {} {} }}", self.name(), self.version()))
+        f.write_fmt(format_args!("{{ {} {} {} }}", self.name(), self.version(), self.bind_transport))
     }
 }
 

@@ -1,4 +1,3 @@
-
 mod error;
 pub use error::Error;
 
@@ -22,7 +21,7 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Call, Event, Module, Transition};
+use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition};
 use hex::{FromHex, ToHex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -107,6 +106,7 @@ pub struct UnlockCurrencyParam {
 
 pub struct CurrenciesModule {
     pool: LocalPool,
+    bus_addr: Option<Addr<Bus>>,
 }
 
 impl fmt::Debug for CurrenciesModule {
@@ -120,11 +120,12 @@ impl CurrenciesModule {
         Ok(Self {
             pool: Pool::new(ConnectionManager::new(&path))
                 .map_err(|_| EwfError::ModuleInstanceError)?,
+            bus_addr: None,
         })
     }
 
     /// 安装数据表
-    /// 
+    ///
     /// 异常信息
     ///     DatabaseExistsInstallError 表已存在导致失败，一般无需关注
     ///     DatabaseInstallError 其他原因建表失败
@@ -386,27 +387,29 @@ impl Handler<Event> for CurrenciesModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
+        let bus_addr = self.bus_addr.clone().unwrap();
 
         Box::pin(async move {
             let db_conn = pool.get().unwrap();
 
             let id = _msg.id;
-            let bus = _msg.addr;
             let event: &str = &_msg.event;
             match event {
                 "Start" => {
                     if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        bus.send(Transition {
-                            id,
-                            transition: "InitalSuccess".to_string(),
-                        })
-                        .await??;
+                        bus_addr
+                            .send(Transition {
+                                id,
+                                transition: "InitalSuccess".to_string(),
+                            })
+                            .await??;
                     } else {
-                        bus.send(Transition {
-                            id,
-                            transition: "InitalFail".to_string(),
-                        })
-                        .await??;
+                        bus_addr
+                            .send(Transition {
+                                id,
+                                transition: "InitalFail".to_string(),
+                            })
+                            .await??;
                     }
                 }
                 // no care this event, ignore
@@ -415,6 +418,13 @@ impl Handler<Event> for CurrenciesModule {
 
             Ok(())
         })
+    }
+}
+
+impl Handler<StartNotify> for CurrenciesModule {
+    type Result = ();
+    fn handle(&mut self, _msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
+        self.bus_addr = Some(_msg.addr);
     }
 }
 

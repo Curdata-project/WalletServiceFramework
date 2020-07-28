@@ -6,7 +6,6 @@ use serde_json::Value;
 #[derive(Debug, Message, Clone)]
 #[rtype(result = "Result<(), Error>")]
 pub struct Event {
-    pub addr: Addr<Bus>,
     pub id: u64,
     pub machine: String,
     pub event: String,
@@ -15,9 +14,14 @@ pub struct Event {
 #[derive(Debug, Message, Clone)]
 #[rtype(result = "Result<Value, Error>")]
 pub struct Call {
-    pub addr: Addr<Bus>,
     pub method: String,
     pub args: Value,
+}
+
+#[derive(Debug, Message, Clone)]
+#[rtype(result = "()")]
+pub struct StartNotify {
+    pub addr: Addr<Bus>,
 }
 
 #[derive(Debug, Message, Clone)]

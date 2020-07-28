@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::machines::{Machine, MachineManager};
-use crate::message::{Call, CallQuery, Event, Transition};
+use crate::message::{Call, CallQuery, Event, StartNotify, Transition};
 use crate::Module;
 use actix::prelude::*;
 use std::cmp::Ordering;
@@ -34,6 +34,7 @@ pub struct Bus {
     machines: MachineManager,
     call_caller: HashMap<String, Recipient<Call>>,
     event_caller: HashMap<String, Recipient<Event>>,
+    start_caller: HashMap<String, Recipient<StartNotify>>,
     priorities: Vec<PriorityPair>,
     addr: Option<Addr<Self>>,
 }
@@ -43,7 +44,14 @@ impl Actor for Bus {
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         self.priorities.sort();
-        self.addr = Some(ctx.address())
+        self.addr = Some(ctx.address());
+
+        for v in self.start_caller.values() {
+            v.do_send(StartNotify {
+                addr: ctx.address(),
+            })
+            .unwrap();
+        }
     }
 }
 
@@ -59,6 +67,7 @@ impl Bus {
             machines: MachineManager::new(),
             call_caller: HashMap::new(),
             event_caller: HashMap::new(),
+            start_caller: HashMap::new(),
             priorities: Vec::new(),
             addr: None,
         }
@@ -66,14 +75,12 @@ impl Bus {
 
     pub fn transite(&mut self, msg: Transition) -> Result<(), Error> {
         let (id, machine, event) = self.machines.transition(msg.id, msg.transition)?;
-        let addr = self.addr.as_ref().unwrap();
         for pp in self.priorities.iter() {
             if let Some(caller) = self.event_caller.get(&pp.1) {
                 caller.do_send(Event {
                     id,
                     machine: machine.clone(),
                     event: event.clone(),
-                    addr: addr.clone(),
                 })?;
             }
         }
@@ -86,14 +93,20 @@ impl Bus {
 
     pub fn module<A>(&mut self, priority: i32, actor: A) -> &mut Self
     where
-        A: Actor<Context = Context<A>> + Module + Handler<Call> + Handler<Event>,
+        A: Actor<Context = Context<A>>
+            + Module
+            + Handler<Call>
+            + Handler<Event>
+            + Handler<StartNotify>,
     {
         let name = actor.name();
         let addr = actor.start();
         let call_caller = addr.clone().recipient();
+        let start_caller = addr.clone().recipient();
         let event_caller = addr.recipient();
         self.event_caller.insert(name.clone(), event_caller);
         self.call_caller.insert(name.clone(), call_caller);
+        self.start_caller.insert(name.clone(), start_caller);
         self.priorities.push(PriorityPair(priority, name));
         self
     }

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::message::Event;
 
-pub trait Machine {
+pub trait Machine: Send {
     fn to_string(&self) -> String;
 
     fn name(&self) -> String;

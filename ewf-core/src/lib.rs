@@ -6,6 +6,6 @@ pub mod error;
 pub mod machines;
 pub mod message;
 pub use machines::Machine;
-pub use message::{Call, Event, Transition, CallQuery};
+pub use message::{Call, CallQuery, Event, Transition};
 
 pub mod states;

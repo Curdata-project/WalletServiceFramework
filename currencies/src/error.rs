@@ -11,26 +11,30 @@ pub enum Error {
     DatabaseInsertError,
     DatabaseDeleteError,
     DatabaseJsonDeSerializeError,
+    CallParamValidFaild,
 
     CurrencyUnlockError,
-    ParamDeSerializeError,
     CurrencyByidNotFound,
 }
 
 impl Error {
     pub fn to_ewf_error(self) -> EwfError {
-        EwfError::OtherError(match self {
-            Error::DatabaseConnectError => "DatabaseConnectError".to_string(),
-            Error::DatabaseExistsInstallError => "DatabaseExistsInstallError".to_string(),
-            Error::DatabaseInstallError => "DatabaseInstallError".to_string(),
-            Error::DatabaseSelectError => "DatabaseSelectError".to_string(),
-            Error::DatabaseInsertError => "DatabaseInsertError".to_string(),
-            Error::DatabaseDeleteError => "DatabaseDeleteError".to_string(),
-            Error::DatabaseJsonDeSerializeError => "DatabaseJsonDeSerializeError".to_string(),
+        match self {
+            Error::DatabaseConnectError => EwfError::OtherError("DatabaseConnectError".to_string()),
+            Error::DatabaseExistsInstallError => {
+                EwfError::OtherError("DatabaseExistsInstallError".to_string())
+            }
+            Error::DatabaseInstallError => EwfError::OtherError("DatabaseInstallError".to_string()),
+            Error::DatabaseSelectError => EwfError::OtherError("DatabaseSelectError".to_string()),
+            Error::DatabaseInsertError => EwfError::OtherError("DatabaseInsertError".to_string()),
+            Error::DatabaseDeleteError => EwfError::OtherError("DatabaseDeleteError".to_string()),
+            Error::DatabaseJsonDeSerializeError => {
+                EwfError::OtherError("DatabaseJsonDeSerializeError".to_string())
+            }
+            Error::CallParamValidFaild => EwfError::CallParamValidFaild,
 
-            Error::CurrencyUnlockError => "CurrencyUnlockError".to_string(),
-            Error::ParamDeSerializeError => "ParamDeSerializeError".to_string(),
-            Error::CurrencyByidNotFound => "CurrencyByidNotFound".to_string(),
-        })
+            Error::CurrencyUnlockError => EwfError::OtherError("CurrencyUnlockError".to_string()),
+            Error::CurrencyByidNotFound => EwfError::OtherError("CurrencyByidNotFound".to_string()),
+        }
     }
 }

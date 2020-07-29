@@ -355,7 +355,7 @@ impl Handler<Call> for CurrenciesModule {
                 "unlock_currency" => {
                     let param: UnlockCurrencyParam = match serde_json::from_value(_msg.args) {
                         Ok(param) => param,
-                        Err(_) => return Err(Error::ParamDeSerializeError.to_ewf_error()),
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::unlock_currency(&db_conn, &param.currency)
                         .map_err(|err| err.to_ewf_error())?)
@@ -363,14 +363,14 @@ impl Handler<Call> for CurrenciesModule {
                 "add_currency" => {
                     let param: AddCurrencyParam = match serde_json::from_value(_msg.args) {
                         Ok(param) => param,
-                        Err(_) => return Err(Error::ParamDeSerializeError.to_ewf_error()),
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::add_currency(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
                 }
                 "find_currency_by_id" => {
                     let param: String = match serde_json::from_value(_msg.args) {
                         Ok(param) => param,
-                        Err(_) => return Err(Error::ParamDeSerializeError.to_ewf_error()),
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::find_currency_by_id(&db_conn, &param)
                         .map_err(|err| err.to_ewf_error())?)

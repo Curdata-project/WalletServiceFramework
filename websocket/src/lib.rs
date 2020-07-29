@@ -1,13 +1,14 @@
 mod error;
 
+mod jsonrpc;
 mod server;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::fmt;
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
+use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify, Transition};
 
 use crate::server::WSServer;
 
@@ -62,6 +63,7 @@ impl Handler<Event> for WebSocketModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let bind_transport = self.bind_transport.clone();
+        let bus_addr = self.bus_addr.clone().unwrap();
         let self_addr = _ctx.address();
 
         Box::pin(async move {
@@ -75,6 +77,13 @@ impl Handler<Event> for WebSocketModule {
                             Err(err) => panic!("ws_server bind error, {:?}", err),
                         }
                     });
+
+                    bus_addr
+                        .send(Transition {
+                            id,
+                            transition: "InitalSuccess".to_string(),
+                        })
+                        .await??;
                 }
                 // no care this event, ignore
                 _ => return Ok(()),
@@ -121,7 +130,7 @@ mod tests {
     use currencies::CurrenciesModule;
     use ewf_core::states::WalletMachine;
     use ewf_core::{Bus, Transition};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::time::delay_for;
 
     #[actix_rt::test]

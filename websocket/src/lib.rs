@@ -1,5 +1,3 @@
-mod error;
-
 mod jsonrpc;
 mod server;
 

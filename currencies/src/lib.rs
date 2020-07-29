@@ -21,7 +21,7 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition};
+use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition, CallQuery};
 use hex::{FromHex, ToHex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,6 +29,8 @@ use std::fmt;
 
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::transaction::TransactionWrapper;
+use wallet_common::currencies::{CurrencyStatus, CurrencyEntity, AddCurrencyParam, UnlockCurrencyParam};
+use wallet_common::prepare::PrepareParam;
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -43,66 +45,6 @@ CREATE TABLE "currency_store" (
     PRIMARY KEY ("id")
   )
 "#;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CurrencyStatus {
-    Avail,
-    Lock,
-}
-
-impl CurrencyStatus {
-    pub fn to_int(self) -> i16 {
-        match self {
-            CurrencyStatus::Avail => 0,
-            CurrencyStatus::Lock => 1,
-        }
-    }
-
-    pub fn from_int(status: i16) -> Option<Self> {
-        match status {
-            0 => Some(CurrencyStatus::Avail),
-            1 => Some(CurrencyStatus::Lock),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CurrencyEntity {
-    AvailEntity {
-        id: String,
-        currency: DigitalCurrencyWrapper,
-        txid: String,
-        update_time: i64,
-        last_owner_id: String,
-    },
-    LockEntity {
-        id: String,
-        transaction: TransactionWrapper,
-        txid: String,
-        update_time: i64,
-        last_owner_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AddCurrencyParam {
-    AvailEntity {
-        currency: DigitalCurrencyWrapper,
-        txid: String,
-        last_owner_id: String,
-    },
-    LockEntity {
-        transaction: TransactionWrapper,
-        txid: String,
-        last_owner_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnlockCurrencyParam {
-    currency: DigitalCurrencyWrapper,
-}
 
 pub struct CurrenciesModule {
     pool: LocalPool,
@@ -392,25 +334,18 @@ impl Handler<Event> for CurrenciesModule {
         Box::pin(async move {
             let db_conn = pool.get().unwrap();
 
-            let id = _msg.id;
             let event: &str = &_msg.event;
             match event {
                 "Start" => {
-                    if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        bus_addr
-                            .send(Transition {
-                                id,
-                                transition: "InitalSuccess".to_string(),
-                            })
-                            .await??;
-                    } else {
-                        bus_addr
-                            .send(Transition {
-                                id,
-                                transition: "InitalFail".to_string(),
-                            })
-                            .await??;
-                    }
+                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {true} else {false};
+                    
+                    let prepare = bus_addr.send(CallQuery { module: "prepare".to_string() }).await??;
+                    prepare
+                    .send(Call {
+                        method: "inital".to_string(),
+                        args: json!(PrepareParam{is_prepare: initialed}),
+                    })
+                    .await??;
                 }
                 // no care this event, ignore
                 _ => return Ok(()),
@@ -472,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_currencies_func() {
-        let pool = Pool::new(ConnectionManager::new("db_data"))
+        let pool = Pool::new(ConnectionManager::new("test.db"))
             .map_err(|_| EwfError::ModuleInstanceError)
             .unwrap();
         let db_conn = pool.get().unwrap();

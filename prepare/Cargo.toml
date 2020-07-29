@@ -1,0 +1,22 @@
+[package]
+name = "prepare"
+version = "0.1.0"
+authors = ["xujian <s1473561555@sina.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.11"
+actix = "0.10.0-alpha.3"
+actix-rt = "1.1"
+ewf-core = { path = "../ewf-core" }
+wallet-common = { path = "../wallet-common" }
+serde_json = "1.0.56"
+
+
+[dev-dependencies]
+env_logger = "0.7"
+currencies = { path = "../currencies" }
+websocket = { path = "../websocket" }
+tokio = { version = "0.2", features = ["full"] }

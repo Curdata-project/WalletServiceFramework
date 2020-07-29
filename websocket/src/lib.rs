@@ -3,12 +3,13 @@ mod error;
 mod jsonrpc;
 mod server;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fmt;
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify, Transition};
+use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
+use wallet_common::prepare::PrepareParam;
 
 use crate::server::WSServer;
 
@@ -77,13 +78,14 @@ impl Handler<Event> for WebSocketModule {
                             Err(err) => panic!("ws_server bind error, {:?}", err),
                         }
                     });
-
-                    bus_addr
-                        .send(Transition {
-                            id,
-                            transition: "InitalSuccess".to_string(),
-                        })
-                        .await??;
+                    
+                    let prepare = bus_addr.send(CallQuery { module: "prepare".to_string() }).await??;
+                    prepare
+                    .send(Call {
+                        method: "inital".to_string(),
+                        args: json!(PrepareParam{is_prepare: true}),
+                    })
+                    .await??;
                 }
                 // no care this event, ignore
                 _ => return Ok(()),
@@ -142,7 +144,7 @@ mod tests {
 
         let mut wallet_bus: Bus = Bus::new();
 
-        let currencies = CurrenciesModule::new("db_data".to_string()).unwrap();
+        let currencies = CurrenciesModule::new("test.db".to_string()).unwrap();
         let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
 
         wallet_bus

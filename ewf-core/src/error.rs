@@ -7,6 +7,7 @@ pub enum Error {
     ModuleInstanceError,
     MethodNotFoundError,
     TransitionNotFound,
+    CallParamValidFaild,
 
     OtherError(String),
     ActixError(String),

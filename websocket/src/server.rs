@@ -1,25 +1,27 @@
+use crate::error::{jsonrpc_error_to_value, jsonrpc_id_error_to_value, JSONRPC_ERROR_DEFAULT};
+use crate::WebSocketModule;
+use actix::prelude::*;
+use ewf_core::error::Error as EwfError;
+use ewf_core::Call;
+use futures::future::FutureExt;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
+use jsonrpc_lite::Error as JsonRpcError;
+use jsonrpc_lite::JsonRpc;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
-use actix::prelude::*;
-use crate::WebSocketModule;
-use ewf_core::{Call};
-use jsonrpc_lite::Error as JsonRpcError;
-use serde_json::Value;
-use serde::{Serialize, Deserialize};
-use jsonrpc_lite::JsonRpc;
 
 type WebSockWriteHalf = SplitSink<WebSocketStream<TcpStream>, Message>;
 type WebSockReadHalf = SplitStream<WebSocketStream<TcpStream>>;
 
-
 const REQ_QUEUE_LEN: usize = 10;
 
-pub struct WSServer{
+pub struct WSServer {
     listener: TcpListener,
 }
 
@@ -47,7 +49,10 @@ impl WSServer {
         }
     }
 
-    async fn client_loop(stream: TcpStream, redirecter: Addr<WebSocketModule>) -> Result<(), String> {
+    async fn client_loop(
+        stream: TcpStream,
+        redirecter: Addr<WebSocketModule>,
+    ) -> Result<(), String> {
         let peer = stream
             .peer_addr()
             .map_err(|err| format!("get client peer_addr error, with info: {}", err))?;
@@ -62,14 +67,14 @@ impl WSServer {
         let (req_pipe_in, req_pipe_out) = mpsc::channel(REQ_QUEUE_LEN);
         let (resp_pipe_in, resp_pipe_out) = mpsc::channel(REQ_QUEUE_LEN);
 
-        tokio::select! {
-            _ = Self::dispatch_loop(redirecter, req_pipe_out, resp_pipe_in) => {
+        futures_util::select! {
+            _ = Self::dispatch_loop(redirecter, req_pipe_out, resp_pipe_in).fuse() => {
                 log::info!("client {} close because dispatch_loop", peer);
             },
-            _ = Self::read_half_loop(read_half, req_pipe_in) => {
+            _ = Self::read_half_loop(read_half, req_pipe_in).fuse() => {
                 log::info!("client {} close because read_half", peer);
             },
-            _ = Self::write_half_loop(write_half, resp_pipe_out) => {
+            _ = Self::write_half_loop(write_half, resp_pipe_out).fuse() => {
                 log::info!("client {} close because write_half", peer);
             },
         };
@@ -112,14 +117,16 @@ impl WSServer {
         mut resp_pipe: mpsc::Sender<String>,
     ) {
         while let Some(req_str) = req_pipe.recv().await {
-            if let Err(_) = resp_pipe.send(route_jsonrpc(redirecter.clone(), &req_str).await).await {
+            if let Err(_) = resp_pipe
+                .send(route_jsonrpc(redirecter.clone(), &req_str).await)
+                .await
+            {
                 // 处理完客户端已断开，忽略
                 return;
             }
         }
     }
 }
-
 
 #[derive(Deserialize, Debug)]
 pub struct Request {
@@ -131,15 +138,45 @@ pub struct Request {
 
 /// 传入一个Value格式的json-rpc单独请求
 ///   立刻返回响应执行Future或者错误结果
-pub async fn route_once(
-    redirecter: Addr<WebSocketModule>, 
-    req: Value,
-) -> Value {
-    let req: Request = serde_json::from_value(req).unwrap();
-    let resp = redirecter.send(Call{
-        method: req.method,
-        args: req.params,
-    }).await.unwrap().unwrap();
+pub async fn route_once(redirecter: Addr<WebSocketModule>, req: Value) -> Value {
+    let req: Request = match serde_json::from_value(req) {
+        Ok(req) => req,
+        Err(_) => return jsonrpc_error_to_value(JsonRpcError::invalid_request()),
+    };
+
+    let resp = match redirecter
+        .send(Call {
+            method: req.method,
+            args: req.params,
+        })
+        .await
+    {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(EwfError::MethodNotFoundError)) => {
+            jsonrpc_id_error_to_value(req.id, JsonRpcError::method_not_found())
+        }
+        Ok(Err(EwfError::CallParamValidFaild)) => {
+            jsonrpc_id_error_to_value(req.id, JsonRpcError::invalid_params())
+        }
+        Ok(Err(EwfError::OtherError(other_err))) => jsonrpc_id_error_to_value(
+            req.id,
+            JsonRpcError {
+                code: JSONRPC_ERROR_DEFAULT,
+                message: format!("{}", other_err),
+                data: None,
+            },
+        ),
+        Ok(Err(err)) => jsonrpc_id_error_to_value(
+            req.id,
+            JsonRpcError {
+                code: JSONRPC_ERROR_DEFAULT,
+                message: format!("{:?}", err),
+                data: None,
+            },
+        ),
+        // 投递错误
+        Err(_) => jsonrpc_id_error_to_value(req.id, JsonRpcError::internal_error()),
+    };
 
     resp
 }
@@ -149,22 +186,26 @@ pub async fn route_once(
 pub async fn route_jsonrpc(redirecter: Addr<WebSocketModule>, req_str: &str) -> String {
     let req: Value = match serde_json::from_str(req_str) {
         Ok(req) => req,
-        Err(_) => {
-            return serde_json::to_value(JsonRpc::error((), JsonRpcError::parse_error()))
-                .unwrap()
-                .to_string()
-        }
+        Err(_) => return jsonrpc_error_to_value(JsonRpcError::parse_error()).to_string(),
     };
     let resp = match req {
         Value::Object(_) => route_once(redirecter, req).await.to_string(),
         Value::Array(array) => {
-            "".to_string()
+            let output = Vec::<Value>::new();
+            let mut tasks = Vec::new();
+
+            if array.len() == 0 {
+                return jsonrpc_error_to_value(JsonRpcError::invalid_request()).to_string();
+            }
+
+            for each in array {
+                tasks.push(async { route_once(redirecter.clone(), each).await });
+            }
+            let output = futures_util::future::join_all(tasks).await;
+
+            Value::Array(output).to_string()
         }
-        _ => {
-            return serde_json::to_value(JsonRpc::error((), JsonRpcError::parse_error()))
-                .unwrap()
-                .to_string()
-        }
+        _ => return jsonrpc_error_to_value(JsonRpcError::parse_error()).to_string(),
     };
 
     resp.to_string()

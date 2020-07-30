@@ -21,7 +21,7 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition, CallQuery};
+use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify, Transition};
 use hex::{FromHex, ToHex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,7 +29,9 @@ use std::fmt;
 
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::transaction::TransactionWrapper;
-use wallet_common::currencies::{CurrencyStatus, CurrencyEntity, AddCurrencyParam, UnlockCurrencyParam};
+use wallet_common::currencies::{
+    AddCurrencyParam, CurrencyEntity, CurrencyStatus, UnlockCurrencyParam,
+};
 use wallet_common::prepare::PrepareParam;
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
@@ -337,15 +339,25 @@ impl Handler<Event> for CurrenciesModule {
             let event: &str = &_msg.event;
             match event {
                 "Start" => {
-                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {true} else {false};
-                    
-                    let prepare = bus_addr.send(CallQuery { module: "prepare".to_string() }).await??;
+                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
+                        true
+                    } else {
+                        false
+                    };
+
+                    let prepare = bus_addr
+                        .send(CallQuery {
+                            module: "prepare".to_string(),
+                        })
+                        .await??;
                     prepare
-                    .send(Call {
-                        method: "inital".to_string(),
-                        args: json!(PrepareParam{is_prepare: initialed}),
-                    })
-                    .await??;
+                        .send(Call {
+                            method: "inital".to_string(),
+                            args: json!(PrepareParam {
+                                is_prepare: initialed
+                            }),
+                        })
+                        .await??;
                 }
                 // no care this event, ignore
                 _ => return Ok(()),
@@ -388,7 +400,7 @@ mod tests {
     async fn test_currencies_mod() {
         let mut wallet_bus: Bus = Bus::new();
 
-        let currencies = CurrenciesModule::new("db_data".to_string()).unwrap();
+        let currencies = CurrenciesModule::new("test.db".to_string()).unwrap();
 
         wallet_bus
             .machine(WalletMachine::default())

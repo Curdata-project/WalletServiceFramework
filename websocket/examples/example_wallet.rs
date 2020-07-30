@@ -3,10 +3,8 @@ extern crate websocket;
 use actix::prelude::*;
 use currencies::CurrenciesModule;
 use ewf_core::states::WalletMachine;
-use ewf_core::{Bus, Transition};
+use ewf_core::{Bus};
 use prepare::PrepareModule;
-use std::time::Duration;
-use tokio::time::delay_for;
 use websocket::WebSocketModule;
 
 fn start_sm_wallet() {

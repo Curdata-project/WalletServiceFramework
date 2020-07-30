@@ -21,9 +21,8 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify, Transition};
+use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
 use hex::{FromHex, ToHex};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
@@ -424,7 +423,7 @@ mod tests {
             .unwrap();
         let db_conn = pool.get().unwrap();
 
-        CurrenciesModule::create(&db_conn);
+        CurrenciesModule::create(&db_conn).unwrap_or(());
         diesel::delete(currency_store).execute(&db_conn).unwrap();
 
         let currency =
@@ -463,7 +462,7 @@ mod tests {
                 id,
                 currency,
                 txid,
-                update_time,
+                update_time: _,
                 last_owner_id,
             } => {
                 assert_eq!(
@@ -487,7 +486,7 @@ mod tests {
                 id,
                 transaction,
                 txid,
-                update_time,
+                update_time: _,
                 last_owner_id,
             } => {
                 assert_eq!(

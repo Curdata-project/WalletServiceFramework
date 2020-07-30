@@ -1,6 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrepareParam {
-    pub is_prepare: bool,
+pub enum ModStatus{
+    UnInital,
+    InitalSuccess,
+    InitalFailed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModStatusPullParam {
+    pub mod_name: String,
+    pub is_prepare: ModStatus,
 }

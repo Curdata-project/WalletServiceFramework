@@ -7,7 +7,7 @@ use std::fmt;
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
 use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
-use wallet_common::prepare::PrepareParam;
+use wallet_common::prepare::{ModStatusPullParam, ModStatus};
 
 use crate::server::WSServer;
 
@@ -63,6 +63,7 @@ impl Handler<Event> for WebSocketModule {
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let bind_transport = self.bind_transport.clone();
         let bus_addr = self.bus_addr.clone().unwrap();
+        let mod_name = self.name();
         let self_addr = _ctx.address();
 
         Box::pin(async move {
@@ -84,7 +85,7 @@ impl Handler<Event> for WebSocketModule {
                     prepare
                         .send(Call {
                             method: "inital".to_string(),
-                            args: json!(PrepareParam { is_prepare: true }),
+                            args: json!(ModStatusPullParam { mod_name, is_prepare: ModStatus::InitalSuccess }),
                         })
                         .await??;
                 }

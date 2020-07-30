@@ -32,7 +32,7 @@ use common_structure::transaction::TransactionWrapper;
 use wallet_common::currencies::{
     AddCurrencyParam, CurrencyEntity, CurrencyStatus, UnlockCurrencyParam,
 };
-use wallet_common::prepare::PrepareParam;
+use wallet_common::prepare::{ModStatusPullParam, ModStatus};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -243,8 +243,8 @@ impl CurrenciesModule {
             .first::<CurrencyStore>(db_conn)
             .map_err(|_| Error::CurrencyByidNotFound)?;
 
-        Ok(match CurrencyStatus::from_int(currency.status) {
-            Some(CurrencyStatus::Avail) => {
+        Ok(match CurrencyStatus::from(currency.status) {
+            CurrencyStatus::Avail => {
                 let avail_currency = DigitalCurrencyWrapper::from_bytes(
                     &Vec::<u8>::from_hex(&currency.currency)
                         .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
@@ -259,7 +259,7 @@ impl CurrenciesModule {
                     last_owner_id: currency.last_owner_id,
                 }
             }
-            Some(CurrencyStatus::Lock) => {
+            CurrencyStatus::Lock => {
                 let lock_currency = TransactionWrapper::from_bytes(
                     &Vec::<u8>::from_hex(&currency.currency)
                         .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
@@ -274,8 +274,6 @@ impl CurrenciesModule {
                     last_owner_id: currency.last_owner_id,
                 }
             }
-
-            None => return Err(Error::DatabaseJsonDeSerializeError),
         })
     }
 }
@@ -331,6 +329,7 @@ impl Handler<Event> for CurrenciesModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
+        let mod_name = self.name();
         let bus_addr = self.bus_addr.clone().unwrap();
 
         Box::pin(async move {
@@ -340,9 +339,9 @@ impl Handler<Event> for CurrenciesModule {
             match event {
                 "Start" => {
                     let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        true
+                        ModStatus::InitalSuccess
                     } else {
-                        false
+                        ModStatus::InitalFailed
                     };
 
                     let prepare = bus_addr
@@ -353,8 +352,9 @@ impl Handler<Event> for CurrenciesModule {
                     prepare
                         .send(Call {
                             method: "inital".to_string(),
-                            args: json!(PrepareParam {
-                                is_prepare: initialed
+                            args: json!(ModStatusPullParam {
+                                mod_name: mod_name,
+                                is_prepare: initialed,
                             }),
                         })
                         .await??;

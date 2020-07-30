@@ -17,7 +17,7 @@ fn start_sm_wallet() {
 
     let currencies = CurrenciesModule::new("test.db".to_string()).unwrap();
     let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
-    let prepare = PrepareModule::new(2);
+    let prepare = PrepareModule::new(vec!["currencies", "webscoket_jsonrpc"]);
 
     wallet_bus
         .machine(WalletMachine::default())

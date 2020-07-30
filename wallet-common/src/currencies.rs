@@ -15,12 +15,15 @@ impl CurrencyStatus {
             CurrencyStatus::Lock => 1,
         }
     }
+}
 
-    pub fn from_int(status: i16) -> Option<Self> {
+impl From<i16> for CurrencyStatus {
+
+    fn from(status: i16) -> Self {
         match status {
-            0 => Some(CurrencyStatus::Avail),
-            1 => Some(CurrencyStatus::Lock),
-            _ => None,
+            0 => CurrencyStatus::Avail,
+            1 => CurrencyStatus::Lock,
+            _ => CurrencyStatus::Avail,
         }
     }
 }

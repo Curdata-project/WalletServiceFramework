@@ -6,7 +6,6 @@ use jsonrpc_lite::{Error as JsonRpcError, JsonRpc};
 use serde::Deserialize;
 use serde_json::Value;
 
-
 const JSONRPC_ERROR_DEFAULT: i64 = 9999i64;
 
 fn jsonrpc_error_to_value(err: JsonRpcError) -> Value {
@@ -16,7 +15,6 @@ fn jsonrpc_error_to_value(err: JsonRpcError) -> Value {
 fn jsonrpc_id_error_to_value(id: i64, err: JsonRpcError) -> Value {
     serde_json::to_value(JsonRpc::error(id, err)).unwrap()
 }
-
 
 #[derive(Deserialize, Debug)]
 struct Request {

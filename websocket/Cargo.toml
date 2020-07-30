@@ -24,4 +24,6 @@ tokio-tungstenite = "0.10.1"
 
 [dev-dependencies]
 env_logger = "0.7"
+prepare = { path = "../prepare" }
 currencies = { path = "../currencies" }
+tokio = { version = "0.2", features = ["full"] }

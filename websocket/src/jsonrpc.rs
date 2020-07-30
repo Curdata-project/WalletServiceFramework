@@ -1,11 +1,22 @@
-use crate::error::{jsonrpc_error_to_value, jsonrpc_id_error_to_value, JSONRPC_ERROR_DEFAULT};
 use crate::WebSocketModule;
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
 use ewf_core::Call;
-use jsonrpc_lite::Error as JsonRpcError;
+use jsonrpc_lite::{Error as JsonRpcError, JsonRpc};
 use serde::Deserialize;
 use serde_json::Value;
+
+
+const JSONRPC_ERROR_DEFAULT: i64 = 9999i64;
+
+fn jsonrpc_error_to_value(err: JsonRpcError) -> Value {
+    serde_json::to_value(JsonRpc::error((), err)).unwrap()
+}
+
+fn jsonrpc_id_error_to_value(id: i64, err: JsonRpcError) -> Value {
+    serde_json::to_value(JsonRpc::error(id, err)).unwrap()
+}
+
 
 #[derive(Deserialize, Debug)]
 struct Request {
@@ -62,7 +73,7 @@ async fn route_once(redirecter: Addr<WebSocketModule>, req: Value) -> Value {
 
 /// 传入jsonrpc请求
 ///   返回结果
-pub async fn route_jsonrpc(redirecter: Addr<WebSocketModule>, req_str: &str) -> String {
+pub(crate) async fn route_jsonrpc(redirecter: Addr<WebSocketModule>, req_str: &str) -> String {
     let req: Value = match serde_json::from_str(req_str) {
         Ok(req) => req,
         Err(_) => return jsonrpc_error_to_value(JsonRpcError::parse_error()).to_string(),

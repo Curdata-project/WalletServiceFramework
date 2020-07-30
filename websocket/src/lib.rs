@@ -1,5 +1,3 @@
-mod error;
-
 mod jsonrpc;
 mod server;
 
@@ -69,7 +67,6 @@ impl Handler<Event> for WebSocketModule {
 
         Box::pin(async move {
             let event: &str = &_msg.event;
-            let id = _msg.id;
             match event {
                 "Start" => {
                     actix::spawn(async move {

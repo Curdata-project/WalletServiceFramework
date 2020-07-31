@@ -504,9 +504,5 @@ mod tests {
             }
             _ => false,
         });
-        let ans = CurrenciesModule::delete(&db_conn, id: &str)(
-            &db_conn,
-            &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e",
-        );
     }
 }

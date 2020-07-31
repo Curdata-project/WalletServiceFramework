@@ -6,7 +6,8 @@ members = [
     "currencies",
     "websocket",
     "wallet-common",
-    "prepare"
+    "prepare",
+    "secret"
 ]
 
 

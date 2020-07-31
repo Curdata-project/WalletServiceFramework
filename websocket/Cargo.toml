@@ -25,4 +25,5 @@ tokio-tungstenite = "0.10.1"
 [dev-dependencies]
 prepare = { path = "../prepare" }
 currencies = { path = "../currencies" }
+secret = { path = "../secret" }
 env_logger = "0.7"

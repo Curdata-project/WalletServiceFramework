@@ -4,7 +4,6 @@ use crate::message::{Call, CallQuery, Event, StartNotify, Transition};
 use crate::Module;
 use actix::prelude::*;
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 

@@ -2,8 +2,6 @@ use crate::error::Error;
 use std::boxed::Box;
 use std::collections::BTreeMap;
 
-use crate::message::Event;
-
 pub trait Machine {
     fn to_string(&self) -> String;
 

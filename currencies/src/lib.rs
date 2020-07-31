@@ -31,7 +31,7 @@ use common_structure::transaction::TransactionWrapper;
 use wallet_common::currencies::{
     AddCurrencyParam, CurrencyEntity, CurrencyStatus, UnlockCurrencyParam,
 };
-use wallet_common::prepare::{ModStatusPullParam, ModStatus};
+use wallet_common::prepare::{ModStatus, ModStatusPullParam};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -113,6 +113,7 @@ impl CurrenciesModule {
     }
 
     /// 删除表格式数据
+    #[allow(dead_code)]
     fn delete(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(currency_store.find(id))
             .execute(db_conn)
@@ -503,5 +504,9 @@ mod tests {
             }
             _ => false,
         });
+        let ans = CurrenciesModule::delete(&db_conn, id: &str)(
+            &db_conn,
+            &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e",
+        );
     }
 }

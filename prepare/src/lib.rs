@@ -3,11 +3,10 @@ use std::fmt;
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify, Transition};
-use wallet_common::prepare::{ModStatusPullParam, ModStatus};
-use wallet_common::WALLET_SM_CODE;
+use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition};
 use std::collections::hash_map::HashMap;
-
+use wallet_common::prepare::{ModStatus, ModStatusPullParam};
+use wallet_common::WALLET_SM_CODE;
 
 pub struct PrepareModule {
     bus_addr: Option<Addr<Bus>>,
@@ -21,7 +20,10 @@ impl PrepareModule {
     pub fn new(prepare_mods: Vec<&str>) -> Self {
         let prepare_cnt = prepare_mods.len() as u64;
         let mut prepare_map = HashMap::<String, ModStatus>::new();
-        prepare_mods.iter().map(|x| prepare_map.insert(x.to_string(), ModStatus::UnInital)).count();
+        prepare_mods
+            .iter()
+            .map(|x| prepare_map.insert(x.to_string(), ModStatus::UnInital))
+            .count();
 
         Self {
             bus_addr: None,
@@ -50,19 +52,27 @@ impl Handler<Call> for PrepareModule {
                 let param: ModStatusPullParam =
                     serde_json::from_value(args).map_err(|_| EwfError::CallParamValidFaild)?;
 
-                match param.is_prepare{
+                match param.is_prepare {
                     ModStatus::InitalSuccess => {
-                        match self.prepare_map.insert(param.mod_name.clone(), ModStatus::InitalSuccess) {
+                        match self
+                            .prepare_map
+                            .insert(param.mod_name.clone(), ModStatus::InitalSuccess)
+                        {
                             None => log::warn!("unknown mod {} initialization", param.mod_name),
                             Some(ModStatus::UnInital) => self.prepare_num_s += 1,
-                            Some(status) => log::warn!("mod {} initial success, but expect from status {:?}", param.mod_name, status),
+                            Some(status) => log::warn!(
+                                "mod {} initial success, but expect from status {:?}",
+                                param.mod_name,
+                                status
+                            ),
                         }
-                    },
+                    }
                     ModStatus::InitalFailed => {
-                        self.prepare_map.insert(param.mod_name, ModStatus::InitalFailed);
+                        self.prepare_map
+                            .insert(param.mod_name, ModStatus::InitalFailed);
                         self.prepare_num_f += 1;
                     }
-                    _ => { },
+                    _ => {}
                 }
 
                 if self.prepare_num_s + self.prepare_num_f == self.prepare_cnt {
@@ -100,7 +110,6 @@ impl Handler<Event> for PrepareModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let event: &str = &msg.event;
-        let id = msg.id;
         match event {
             "Start" => {
                 self.prepare_num_s = 0;

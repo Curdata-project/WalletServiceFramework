@@ -1,5 +1,5 @@
 use reqwest::header::{HeaderValue, CONTENT_TYPE};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::time::Duration;
 
 const X_CLOUD_USER_ID: &str = "1704a514-1dd2-11b2-802a-557365724164";

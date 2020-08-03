@@ -54,6 +54,14 @@ async fn route_once(redirecter: Addr<WebSocketModule>, req: Value) -> Value {
                 data: None,
             },
         ),
+        Ok(Err(EwfError::JsonRpcError { code, msg })) => jsonrpc_id_error_to_value(
+            req.id,
+            JsonRpcError {
+                code: code,
+                message: msg,
+                data: None,
+            },
+        ),
         Ok(Err(err)) => jsonrpc_id_error_to_value(
             req.id,
             JsonRpcError {

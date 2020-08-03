@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 actix = "0.10.0-alpha.3"
 ewf-core = { path = "../ewf-core" }
+wallet-common = { path = "../wallet-common" }
 log = "0.4.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.56"

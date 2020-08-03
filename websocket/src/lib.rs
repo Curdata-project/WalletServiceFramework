@@ -1,12 +1,13 @@
 mod jsonrpc;
 mod server;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fmt;
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify, Transition};
+use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
+use wallet_common::prepare::{ModStatusPullParam, ModStatus};
 
 use crate::server::WSServer;
 
@@ -62,11 +63,11 @@ impl Handler<Event> for WebSocketModule {
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let bind_transport = self.bind_transport.clone();
         let bus_addr = self.bus_addr.clone().unwrap();
+        let mod_name = self.name();
         let self_addr = _ctx.address();
 
         Box::pin(async move {
             let event: &str = &_msg.event;
-            let id = _msg.id;
             match event {
                 "Start" => {
                     actix::spawn(async move {
@@ -76,10 +77,15 @@ impl Handler<Event> for WebSocketModule {
                         }
                     });
 
-                    bus_addr
-                        .send(Transition {
-                            id,
-                            transition: "InitalSuccess".to_string(),
+                    let prepare = bus_addr
+                        .send(CallQuery {
+                            module: "prepare".to_string(),
+                        })
+                        .await??;
+                    prepare
+                        .send(Call {
+                            method: "inital".to_string(),
+                            args: json!(ModStatusPullParam { mod_name, is_prepare: ModStatus::InitalSuccess }),
                         })
                         .await??;
                 }
@@ -117,46 +123,5 @@ impl Module for WebSocketModule {
 
     fn version(&self) -> String {
         "0.1".to_string()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    extern crate currencies;
-
-    use super::*;
-    use currencies::CurrenciesModule;
-    use ewf_core::states::WalletMachine;
-    use ewf_core::{Bus, Transition};
-    use std::time::Duration;
-    use tokio::time::delay_for;
-
-    #[actix_rt::test]
-    async fn test_websocket() {
-        use env_logger::Env;
-        env_logger::from_env(Env::default().default_filter_or("warn"))
-            .is_test(true)
-            .init();
-
-        let mut wallet_bus: Bus = Bus::new();
-
-        let currencies = CurrenciesModule::new("db_data".to_string()).unwrap();
-        let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
-
-        wallet_bus
-            .machine(WalletMachine::default())
-            .module(1, currencies)
-            .module(2, ws_server);
-
-        let addr = wallet_bus.start();
-        addr.send(Transition {
-            id: 0,
-            transition: "Starting".to_string(),
-        })
-        .await
-        .unwrap()
-        .unwrap();
-
-        delay_for(Duration::from_millis(3600 * 1000)).await;
     }
 }

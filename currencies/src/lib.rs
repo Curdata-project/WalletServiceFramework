@@ -21,14 +21,17 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition};
+use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
 use hex::{FromHex, ToHex};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::transaction::TransactionWrapper;
+use wallet_common::currencies::{
+    AddCurrencyParam, CurrencyEntity, CurrencyStatus, UnlockCurrencyParam,
+};
+use wallet_common::prepare::{ModStatus, ModStatusPullParam};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -43,66 +46,6 @@ CREATE TABLE "currency_store" (
     PRIMARY KEY ("id")
   )
 "#;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CurrencyStatus {
-    Avail,
-    Lock,
-}
-
-impl CurrencyStatus {
-    pub fn to_int(self) -> i16 {
-        match self {
-            CurrencyStatus::Avail => 0,
-            CurrencyStatus::Lock => 1,
-        }
-    }
-
-    pub fn from_int(status: i16) -> Option<Self> {
-        match status {
-            0 => Some(CurrencyStatus::Avail),
-            1 => Some(CurrencyStatus::Lock),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CurrencyEntity {
-    AvailEntity {
-        id: String,
-        currency: DigitalCurrencyWrapper,
-        txid: String,
-        update_time: i64,
-        last_owner_id: String,
-    },
-    LockEntity {
-        id: String,
-        transaction: TransactionWrapper,
-        txid: String,
-        update_time: i64,
-        last_owner_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AddCurrencyParam {
-    AvailEntity {
-        currency: DigitalCurrencyWrapper,
-        txid: String,
-        last_owner_id: String,
-    },
-    LockEntity {
-        transaction: TransactionWrapper,
-        txid: String,
-        last_owner_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnlockCurrencyParam {
-    currency: DigitalCurrencyWrapper,
-}
 
 pub struct CurrenciesModule {
     pool: LocalPool,
@@ -170,6 +113,7 @@ impl CurrenciesModule {
     }
 
     /// 删除表格式数据
+    #[allow(dead_code)]
     fn delete(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(currency_store.find(id))
             .execute(db_conn)
@@ -299,8 +243,8 @@ impl CurrenciesModule {
             .first::<CurrencyStore>(db_conn)
             .map_err(|_| Error::CurrencyByidNotFound)?;
 
-        Ok(match CurrencyStatus::from_int(currency.status) {
-            Some(CurrencyStatus::Avail) => {
+        Ok(match CurrencyStatus::from(currency.status) {
+            CurrencyStatus::Avail => {
                 let avail_currency = DigitalCurrencyWrapper::from_bytes(
                     &Vec::<u8>::from_hex(&currency.currency)
                         .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
@@ -315,7 +259,7 @@ impl CurrenciesModule {
                     last_owner_id: currency.last_owner_id,
                 }
             }
-            Some(CurrencyStatus::Lock) => {
+            CurrencyStatus::Lock => {
                 let lock_currency = TransactionWrapper::from_bytes(
                     &Vec::<u8>::from_hex(&currency.currency)
                         .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
@@ -330,8 +274,6 @@ impl CurrenciesModule {
                     last_owner_id: currency.last_owner_id,
                 }
             }
-
-            None => return Err(Error::DatabaseJsonDeSerializeError),
         })
     }
 }
@@ -387,30 +329,35 @@ impl Handler<Event> for CurrenciesModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
+        let mod_name = self.name();
         let bus_addr = self.bus_addr.clone().unwrap();
 
         Box::pin(async move {
             let db_conn = pool.get().unwrap();
 
-            let id = _msg.id;
             let event: &str = &_msg.event;
             match event {
                 "Start" => {
-                    if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        bus_addr
-                            .send(Transition {
-                                id,
-                                transition: "InitalSuccess".to_string(),
-                            })
-                            .await??;
+                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
+                        ModStatus::InitalSuccess
                     } else {
-                        bus_addr
-                            .send(Transition {
-                                id,
-                                transition: "InitalFail".to_string(),
-                            })
-                            .await??;
-                    }
+                        ModStatus::InitalFailed
+                    };
+
+                    let prepare = bus_addr
+                        .send(CallQuery {
+                            module: "prepare".to_string(),
+                        })
+                        .await??;
+                    prepare
+                        .send(Call {
+                            method: "inital".to_string(),
+                            args: json!(ModStatusPullParam {
+                                mod_name: mod_name,
+                                is_prepare: initialed,
+                            }),
+                        })
+                        .await??;
                 }
                 // no care this event, ignore
                 _ => return Ok(()),
@@ -453,7 +400,7 @@ mod tests {
     async fn test_currencies_mod() {
         let mut wallet_bus: Bus = Bus::new();
 
-        let currencies = CurrenciesModule::new("db_data".to_string()).unwrap();
+        let currencies = CurrenciesModule::new("test.db".to_string()).unwrap();
 
         wallet_bus
             .machine(WalletMachine::default())
@@ -472,12 +419,12 @@ mod tests {
 
     #[test]
     fn test_currencies_func() {
-        let pool = Pool::new(ConnectionManager::new("db_data"))
+        let pool = Pool::new(ConnectionManager::new("test.db"))
             .map_err(|_| EwfError::ModuleInstanceError)
             .unwrap();
         let db_conn = pool.get().unwrap();
 
-        CurrenciesModule::create(&db_conn);
+        CurrenciesModule::create(&db_conn).unwrap_or(());
         diesel::delete(currency_store).execute(&db_conn).unwrap();
 
         let currency =
@@ -516,7 +463,7 @@ mod tests {
                 id,
                 currency,
                 txid,
-                update_time,
+                update_time: _,
                 last_owner_id,
             } => {
                 assert_eq!(
@@ -540,7 +487,7 @@ mod tests {
                 id,
                 transaction,
                 txid,
-                update_time,
+                update_time: _,
                 last_owner_id,
             } => {
                 assert_eq!(

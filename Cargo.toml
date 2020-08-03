@@ -4,7 +4,9 @@ members = [
     "ewf-core",
     "mock-module",
     "currencies",
-    "websocket"
+    "websocket",
+    "wallet-common",
+    "prepare"
 ]
 
 

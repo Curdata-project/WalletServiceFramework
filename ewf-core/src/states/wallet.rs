@@ -20,7 +20,15 @@ enum WalletTransition {
 
 impl From<String> for WalletTransition {
     fn from(t: String) -> WalletTransition {
-        WalletTransition::Starting
+        let t: &str = &t;
+        match t {
+            "Starting" => WalletTransition::Starting,
+            "InitalSuccess" => WalletTransition::InitalSuccess,
+            "InitalFailed" => WalletTransition::InitalFailed,
+            "CloseWallet" => WalletTransition::CloseWallet,
+            "ClearWallet" => WalletTransition::ClearWallet,
+            _ => WalletTransition::Starting,
+        }
     }
 }
 

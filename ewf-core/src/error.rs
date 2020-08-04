@@ -9,6 +9,7 @@ pub enum Error {
     TransitionNotFound,
     CallParamValidFaild,
 
+    JsonRpcError { code: i64, msg: String },
     OtherError(String),
     ActixError(String),
 }

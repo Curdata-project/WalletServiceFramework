@@ -26,4 +26,6 @@ tokio-tungstenite = "0.10.1"
 prepare = { path = "../prepare" }
 currencies = { path = "../currencies" }
 secret = { path = "../secret" }
+history = { path = "../history" }
+user = { path = "../user" }
 env_logger = "0.7"

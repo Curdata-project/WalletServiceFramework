@@ -20,6 +20,3 @@ dislog-hal = { git = "https://github.com/Yinet-project/dislog-hal" }
 kv-object = { git = "https://curdata-bots:SBf(TdV2yeBP@github.com/Curdata-project/KVObject" }
 common-structure = { git = "https://curdata-bots:SBf(TdV2yeBP@github.com/Curdata-project/CommonStructure" }
 
-
-[dev-dependencies]
-actix-rt = "1.1"

@@ -8,7 +8,7 @@ mod models;
 mod schema;
 
 use crate::models::*;
-use crate::schema::user_store::dsl::{self, user_store};
+use crate::schema::user_store::dsl::{user_store};
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -139,7 +139,7 @@ impl UserModule {
     /// 查询交易关联用户信息
     ///     传入交易关联用户UID
     /// 异常信息
-    ///     
+    ///     UserByidNotFound 未发现该用户
     fn query_user(
         db_conn: &SqliteConnection,
         uid: String,
@@ -172,8 +172,29 @@ impl Handler<Call> for UserModule {
         let pool = self.pool.clone();
 
         Box::pin(async move {
+            let method: &str = &_msg.method;
+            let db_conn = pool.get().unwrap();
 
-            Ok(Value::Null)
+            let resp = match method{
+                "add_user" => {
+                    let param: UserEntity = match serde_json::from_value(_msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::add_user(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                },
+                "query_user" => {
+                    let param: String = match serde_json::from_value(_msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::query_user(&db_conn, param)
+                        .map_err(|err| err.to_ewf_error())?)
+                },
+                _ => return Ok(Value::Null),
+            };
+            Ok(resp)
         })
     }
 }
@@ -243,7 +264,6 @@ impl Module for UserModule {
 mod tests {
     use super::*;
     use crate::schema::user_store::dsl::user_store;
-    use chrono::Local;
 
     #[test]
     fn test_user_func() {

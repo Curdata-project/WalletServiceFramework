@@ -8,7 +8,7 @@ mod models;
 mod schema;
 
 use crate::models::*;
-use crate::schema::user_store::dsl::{user_store};
+use crate::schema::user_store::dsl::{self, user_store};
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -25,6 +25,7 @@ use std::fmt;
 
 use wallet_common::prepare::{ModStatus, ModStatusPullParam};
 use wallet_common::user::{UserEntity};
+use wallet_common::common::{QueryParam};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -128,7 +129,7 @@ impl UserModule {
         Self::insert(db_conn, &NewUserStore{
             uid: &user.uid,
             cert: &user.cert,
-            last_tx_time: &NaiveDateTime::from_timestamp(user.last_tx_time / 1000, (user.last_tx_time % 1000) as u32),
+            last_tx_time: &NaiveDateTime::from_timestamp(user.last_tx_time / 1000, (user.last_tx_time % 1000 * 1_000_000) as u32),
             account: &user.account,
         })?;
 
@@ -157,6 +158,35 @@ impl UserModule {
         };
 
         Ok(user_entity)
+    }
+
+    /// 模块对外接口
+    /// 分页查询交易关联用户信息
+    ///     传入查询条件
+    /// 异常信息
+    ///     
+    fn query_user_comb(
+        db_conn: &SqliteConnection,
+        query_param: &QueryParam,
+    ) -> Result<Vec<UserEntity>, Error> {
+        let users = user_store
+            .order_by(dsl::last_tx_time.desc())
+            .limit(query_param.page_items as i64)
+            .offset((query_param.page_items * (query_param.page_num - 1)) as i64)
+            .load::<UserStore>(db_conn)
+            .map_err(|_| Error::UserByidNotFound)?;
+
+        let mut rets = Vec::<UserEntity>::new();
+        for user in users {
+            rets.push(UserEntity{
+                uid: user.uid,
+                cert: user.cert,
+                last_tx_time: user.last_tx_time.timestamp_millis(),
+                account: user.account,
+            });
+        }
+
+        Ok(rets)
     }
 }
 
@@ -190,6 +220,14 @@ impl Handler<Call> for UserModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::query_user(&db_conn, param)
+                        .map_err(|err| err.to_ewf_error())?)
+                },
+                "query_user_comb" => {
+                    let param: QueryParam = match serde_json::from_value(_msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::query_user_comb(&db_conn, &param)
                         .map_err(|err| err.to_ewf_error())?)
                 },
                 _ => return Ok(Value::Null),
@@ -278,7 +316,7 @@ mod tests {
         let exampe_user = UserEntity{
             uid: "uid_001".to_string(),
             cert: "asdasdasd".to_string(),
-            last_tx_time: 1596608177000,
+            last_tx_time: 1596608177111,
             account: "test-account".to_string(),
         };
 
@@ -288,7 +326,18 @@ mod tests {
 
         assert_eq!("uid_001", ans.uid);
         assert_eq!("asdasdasd", ans.cert);
-        assert_eq!(1596608177000, ans.last_tx_time);
+        assert_eq!(1596608177111, ans.last_tx_time);
         assert_eq!("test-account", ans.account);
+
+        let ans = UserModule::query_user_comb(&db_conn, &QueryParam{
+            page_items: 10,
+            page_num: 1,
+            order_by: "".to_string(),
+        }).unwrap();
+
+        assert_eq!("uid_001", ans[0].uid);
+        assert_eq!("asdasdasd", ans[0].cert);
+        assert_eq!(1596608177111, ans[0].last_tx_time);
+        assert_eq!("test-account", ans[0].account);
     }
 }

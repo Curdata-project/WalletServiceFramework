@@ -8,7 +8,7 @@ mod models;
 mod schema;
 
 use crate::models::*;
-use crate::schema::history_store::dsl::{history_store};
+use crate::schema::history_store::dsl::{self, history_store};
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -25,8 +25,10 @@ use std::fmt;
 
 use wallet_common::history::{
     HistoryEntity,
+    TransType,
 };
 use wallet_common::prepare::{ModStatus, ModStatusPullParam};
+use wallet_common::common::{QueryParam};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -136,12 +138,45 @@ impl HistoryModule {
             txid: &history.txid,
             trans_type: history.trans_type.to_int16(),
             oppo_uid: &history.oppo_uid,
-            occur_time: &NaiveDateTime::from_timestamp(history.occur_time / 1000, (history.occur_time % 1000) as u32),
+            occur_time: &NaiveDateTime::from_timestamp(history.occur_time / 1000, (history.occur_time % 1000 * 1_000_000) as u32),
             amount: history.amount as i64,
             balance: history.balance as i64,
             remark: &history.remark,
         })?;
         Ok(())
+    }
+
+    /// 模块对外接口
+    /// 分页查询交易关联用户信息
+    ///     传入查询条件
+    /// 异常信息
+    ///     
+    fn query_history_comb(
+        db_conn: &SqliteConnection,
+        query_param: &QueryParam,
+    ) -> Result<Vec<HistoryEntity>, Error> {
+        let historys = history_store
+            .order_by(dsl::occur_time.desc())
+            .limit(query_param.page_items as i64)
+            .offset((query_param.page_items * (query_param.page_num - 1)) as i64)
+            .load::<HistoryStore>(db_conn)
+            .map_err(|_| Error::DatabaseSelectError)?;
+
+        let mut rets = Vec::<HistoryEntity>::new();
+        for history in historys {
+            rets.push(HistoryEntity{
+                uid: history.uid,
+                txid: history.txid,
+                trans_type: TransType::from_int16(history.trans_type),
+                oppo_uid: history.oppo_uid,
+                occur_time: history.occur_time.timestamp_millis(),
+                amount: history.amount as u64,
+                balance: history.balance as u64,
+                remark: history.remark,
+            });
+        }
+
+        Ok(rets)
     }
 }
 
@@ -167,6 +202,14 @@ impl Handler<Call> for HistoryModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::add_history(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "query_history_comb" => {
+                    let param: QueryParam = match serde_json::from_value(_msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::query_history_comb(&db_conn, &param)
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 _ => Value::Null,

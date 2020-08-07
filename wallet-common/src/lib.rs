@@ -10,6 +10,6 @@ pub mod user;
 
 pub mod http_cli;
 
-pub mod common;
+pub mod query;
 
 pub const WALLET_SM_CODE: u64 = 0u64;

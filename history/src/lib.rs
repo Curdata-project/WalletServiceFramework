@@ -28,7 +28,7 @@ use wallet_common::history::{
     TransType,
 };
 use wallet_common::prepare::{ModStatus, ModStatusPullParam};
-use wallet_common::common::{QueryParam};
+use wallet_common::query::{QueryParam};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -149,6 +149,7 @@ impl HistoryModule {
     /// 模块对外接口
     /// 分页查询交易关联用户信息
     ///     传入查询条件
+    ///         order_by和asc_or_desc暂不使用
     /// 异常信息
     ///     
     fn query_history_comb(

@@ -334,6 +334,7 @@ mod tests {
             page_items: 10,
             page_num: 1,
             order_by: "".to_string(),
+            is_asc_order: true,
         }).unwrap();
 
         assert_eq!("uid_001", ans[0].uid);

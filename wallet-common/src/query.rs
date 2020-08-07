@@ -7,5 +7,5 @@ pub struct QueryParam{
     pub page_items: u32,
     pub page_num: u32,
     pub order_by: String,
-    pub asc_or_desc: bool,
+    pub is_asc_order: bool,
 }

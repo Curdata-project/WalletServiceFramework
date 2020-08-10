@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ModStatus{
+pub enum ModStatus {
     UnInital,
     InitalSuccess,
     InitalFailed,

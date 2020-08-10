@@ -7,7 +7,7 @@ use std::fmt;
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
 use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
-use wallet_common::prepare::{ModStatusPullParam, ModStatus};
+use wallet_common::prepare::{ModStatus, ModStatusPullParam};
 
 use crate::server::WSServer;
 
@@ -85,7 +85,10 @@ impl Handler<Event> for WebSocketModule {
                     prepare
                         .send(Call {
                             method: "inital".to_string(),
-                            args: json!(ModStatusPullParam { mod_name, is_prepare: ModStatus::InitalSuccess }),
+                            args: json!(ModStatusPullParam {
+                                mod_name,
+                                is_prepare: ModStatus::InitalSuccess
+                            }),
                         })
                         .await??;
                 }

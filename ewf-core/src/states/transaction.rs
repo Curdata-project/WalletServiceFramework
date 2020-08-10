@@ -4,29 +4,21 @@ use crate::Machine;
 enum TransactionState {
     Begin,
     Start,
-    PaymentPlanSyn,
-    PaymentPlanDone,
-    PaymentPlanDone,
-    WaitCurrencyStat,
-    SendCurrencyStat,
-    CurrencyPlanDone,
-    SenderExchangeCurrency,
-    CurrencyPlanDone,
-    ComputePlan,
-    ExchangeCurrency,
-    SendCurrencyPlan,
-    HalfTranscation,
-    EndTranscation,
+    Ready,
 }
 
-enum PayTransaction {
+enum TransactionTransition {
+    Starting,
+    TransactionSuccess,
 }
 
-impl From<String> for PayTransaction {
-    fn from(t: String) -> PayTransaction {
+impl From<String> for TransactionTransition {
+    fn from(t: String) -> TransactionTransition {
         let t: &str = &t;
         match t {
-            _ => PayTransaction::Starting,
+            "Starting" => TransactionTransition::Starting,
+            "TransactionSuccess" => TransactionTransition::TransactionSuccess,
+            _ => TransactionTransition::Starting,
         }
     }
 }
@@ -53,69 +45,18 @@ impl Machine for TransactionMachine {
             TransactionState::Begin => "Begin".to_string(),
             TransactionState::Start => "Start".to_string(),
             TransactionState::Ready => "Ready".to_string(),
-            TransactionState::Failed => "Failed".to_string(),
-            TransactionState::Close => "Close".to_string(),
-            TransactionState::Destory => "Destory".to_string(),
         }
     }
 
     fn transition(&mut self, t: String) -> Result<String, Error> {
-        let ti: PayTransaction = t.into();
+        let ti: TransactionTransition = t.into();
         match (&self.state, ti) {
-            (TransactionState::Begin, PayTransaction::Starting) => {
+            (TransactionState::Begin, TransactionTransition::Starting) => {
                 self.state = TransactionState::Start;
                 Ok(self.to_string())
             }
-            (TransactionState::Start, PayTransaction::SendTransaction) => {
+            (TransactionState::Start, TransactionTransition::TransactionSuccess) => {
                 self.state = TransactionState::Ready;
-                Ok(self.to_string())
-            }
-            (TransactionState::Begin, PayTransaction::RecvTransaction) => {
-                self.state = TransactionState::Ready;
-                Ok(self.to_string())
-            }
-            (TransactionState::PaymentPlanSyn, PayTransaction::InitalFailed) => {
-                self.state = TransactionState::Failed;
-                Ok(self.to_string())
-            }
-            (TransactionState::PaymentPlanDone, PayTransaction::CloseTransaction) => {
-                self.state = TransactionState::Close;
-                Ok(self.to_string())
-            }
-            (TransactionState::WaitCurrencyStat, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::SendCurrencyStat, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::CurrencyPlanDone, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::SenderExchangeCurrency, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::CurrencyPlanDone, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::ExchangeCurrency, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::SendCurrencyPlan, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::HalfTranscation, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
-                Ok(self.to_string())
-            }
-            (TransactionState::EndTranscation, PayTransaction::ClearTransaction) => {
-                self.state = TransactionState::Destory;
                 Ok(self.to_string())
             }
             _ => Err(Error::TransitionNotFound),

@@ -1,6 +1,8 @@
 use crate::error::Error;
 use crate::machines::{Machine, MachineManager};
-use crate::message::{Call, CallQuery, Event, StartNotify, Transition};
+use crate::message::{
+    Call, CallQuery, CreateMachine, DestoryMachine, Event, StartNotify, Transition,
+};
 use crate::Module;
 use actix::prelude::*;
 use std::cmp::Ordering;
@@ -132,5 +134,19 @@ impl Handler<CallQuery> for Bus {
         } else {
             Err(Error::NoModule)
         }
+    }
+}
+
+impl Handler<CreateMachine> for Bus {
+    type Result = u64;
+    fn handle(&mut self, msg: CreateMachine, _ctx: &mut Context<Self>) -> Self::Result {
+        self.machines.insert(msg.machine)
+    }
+}
+
+impl Handler<DestoryMachine> for Bus {
+    type Result = ();
+    fn handle(&mut self, msg: DestoryMachine, _ctx: &mut Context<Self>) -> Self::Result {
+        self.machines.delete(msg.machine_id)
     }
 }

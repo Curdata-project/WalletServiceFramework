@@ -33,10 +33,16 @@ impl MachineManager {
         }
     }
 
-    pub fn insert(&mut self, machine: Box<dyn Machine>) {
+    pub fn insert(&mut self, machine: Box<dyn Machine>) -> u64 {
         let id = self.count;
         self.count = id + 1;
         self.machines.insert(id, machine);
+
+        id
+    }
+
+    pub fn delete(&mut self, id: u64) {
+        self.machines.remove(&id);
     }
 
     pub fn get(&self, id: &u64) -> Option<&Box<dyn Machine>> {

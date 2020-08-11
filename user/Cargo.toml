@@ -1,7 +1,7 @@
 [package]
-name = "currencies"
+name = "user"
 version = "0.1.0"
-authors = ["tiannian <dtiannian@gmail.com>"]
+authors = ["xujian"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -19,4 +19,3 @@ hex = { version = "0.4", default-features = false }
 dislog-hal = { git = "https://github.com/Yinet-project/dislog-hal" }
 kv-object = { git = "https://curdata-bots:SBf(TdV2yeBP@github.com/Curdata-project/KVObject" }
 common-structure = { git = "https://curdata-bots:SBf(TdV2yeBP@github.com/Curdata-project/CommonStructure" }
-

@@ -32,7 +32,7 @@ impl From<MailboxError> for Error {
 
 /// 慎用，仅在params转换时使用
 impl From<serde_json::Error> for Error {
-    fn from(e: serde_json::Error) -> Error {
+    fn from(_: serde_json::Error) -> Error {
         Error::CallParamValidFaild
     }
 }

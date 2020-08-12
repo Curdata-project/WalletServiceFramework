@@ -21,7 +21,8 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
+use ewf_core::{async_parse_check, call_mod_througth_bus};
+use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use hex::{FromHex, ToHex};
 use serde_json::{json, Value};
 use std::fmt;
@@ -31,7 +32,7 @@ use common_structure::transaction::TransactionWrapper;
 use wallet_common::currencies::{
     AddCurrencyParam, CurrencyEntity, CurrencyStatus, UnlockCurrencyParam,
 };
-use wallet_common::prepare::{ModStatus, ModStatusPullParam};
+use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -50,6 +51,9 @@ CREATE TABLE "currency_store" (
 pub struct CurrenciesModule {
     pool: LocalPool,
     bus_addr: Option<Addr<Bus>>,
+
+    /// 启动优先级
+    priority: i32,
 }
 
 impl fmt::Debug for CurrenciesModule {
@@ -64,6 +68,7 @@ impl CurrenciesModule {
             pool: Pool::new(ConnectionManager::new(&path))
                 .map_err(|_| EwfError::ModuleInstanceError)?,
             bus_addr: None,
+            priority: 0,
         })
     }
 
@@ -286,16 +291,45 @@ impl Actor for CurrenciesModule {
 
 impl Handler<Call> for CurrenciesModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
-    fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
+        let mod_name = self.name();
+        let bus_addr = self.bus_addr.clone().unwrap();
+        let priority = self.priority;
 
         Box::pin(async move {
             let db_conn = pool.get().unwrap();
 
-            let method: &str = &_msg.method;
+            let method: &str = &msg.method;
             let resp = match method {
+                "mod_initial" => {
+                    let params: ModInitialParam =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                    if params.priority != priority {
+                        return Ok(json!(ModStatus::Ignore));
+                    }
+
+                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
+                        ModStatus::InitalSuccess
+                    } else {
+                        ModStatus::InitalFailed
+                    };
+
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "prepare",
+                        "mod_initial_return",
+                        json!(ModStatusPullParam {
+                            mod_name: mod_name,
+                            is_prepare: initialed.clone(),
+                        })
+                    );
+
+                    json!(initialed)
+                }
                 "unlock_currency" => {
-                    let param: UnlockCurrencyParam = match serde_json::from_value(_msg.args) {
+                    let param: UnlockCurrencyParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
@@ -303,14 +337,14 @@ impl Handler<Call> for CurrenciesModule {
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 "add_currency" => {
-                    let param: AddCurrencyParam = match serde_json::from_value(_msg.args) {
+                    let param: AddCurrencyParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::add_currency(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
                 }
                 "find_currency_by_id" => {
-                    let param: String = match serde_json::from_value(_msg.args) {
+                    let param: String = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
@@ -328,50 +362,21 @@ impl Handler<Call> for CurrenciesModule {
 impl Handler<Event> for CurrenciesModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
-        let pool = self.pool.clone();
-        let mod_name = self.name();
-        let bus_addr = self.bus_addr.clone().unwrap();
-
         Box::pin(async move {
-            let db_conn = pool.get().unwrap();
-
             let event: &str = &_msg.event;
             match event {
-                "Start" => {
-                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        ModStatus::InitalSuccess
-                    } else {
-                        ModStatus::InitalFailed
-                    };
-
-                    let prepare = bus_addr
-                        .send(CallQuery {
-                            module: "prepare".to_string(),
-                        })
-                        .await??;
-                    prepare
-                        .send(Call {
-                            method: "inital".to_string(),
-                            args: json!(ModStatusPullParam {
-                                mod_name: mod_name,
-                                is_prepare: initialed,
-                            }),
-                        })
-                        .await??;
-                }
                 // no care this event, ignore
                 _ => return Ok(()),
             }
-
-            Ok(())
         })
     }
 }
 
 impl Handler<StartNotify> for CurrenciesModule {
     type Result = ();
-    fn handle(&mut self, _msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
-        self.bus_addr = Some(_msg.addr);
+    fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
+        self.bus_addr = Some(msg.addr);
+        self.priority = msg.priority;
     }
 }
 

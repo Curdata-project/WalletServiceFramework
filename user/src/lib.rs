@@ -19,13 +19,14 @@ use chrono::NaiveDateTime;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
+use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
 
-use wallet_common::prepare::{ModStatus, ModStatusPullParam};
-use wallet_common::user::{UserEntity};
-use wallet_common::query::{QueryParam};
+use ewf_core::{async_parse_check, call_mod_througth_bus};
+use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use wallet_common::query::QueryParam;
+use wallet_common::user::UserEntity;
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -42,6 +43,9 @@ CREATE TABLE "user_store" (
 pub struct UserModule {
     pool: LocalPool,
     bus_addr: Option<Addr<Bus>>,
+
+    /// 启动优先级
+    priority: i32,
 }
 
 impl fmt::Debug for UserModule {
@@ -56,6 +60,7 @@ impl UserModule {
             pool: Pool::new(ConnectionManager::new(&path))
                 .map_err(|_| EwfError::ModuleInstanceError)?,
             bus_addr: None,
+            priority: 0,
         })
     }
 
@@ -122,16 +127,19 @@ impl UserModule {
     ///     传入交易关联用户信息
     /// 异常信息
     ///     
-    fn add_user(
-        db_conn: &SqliteConnection,
-        user: &UserEntity,
-    ) -> Result<(), Error> {
-        Self::insert(db_conn, &NewUserStore{
-            uid: &user.uid,
-            cert: &user.cert,
-            last_tx_time: &NaiveDateTime::from_timestamp(user.last_tx_time / 1000, (user.last_tx_time % 1000 * 1_000_000) as u32),
-            account: &user.account,
-        })?;
+    fn add_user(db_conn: &SqliteConnection, user: &UserEntity) -> Result<(), Error> {
+        Self::insert(
+            db_conn,
+            &NewUserStore {
+                uid: &user.uid,
+                cert: &user.cert,
+                last_tx_time: &NaiveDateTime::from_timestamp(
+                    user.last_tx_time / 1000,
+                    (user.last_tx_time % 1000 * 1_000_000) as u32,
+                ),
+                account: &user.account,
+            },
+        )?;
 
         Ok(())
     }
@@ -141,16 +149,13 @@ impl UserModule {
     ///     传入交易关联用户UID
     /// 异常信息
     ///     UserByidNotFound 未发现该用户
-    fn query_user(
-        db_conn: &SqliteConnection,
-        uid: String,
-    ) -> Result<UserEntity, Error> {
+    fn query_user(db_conn: &SqliteConnection, uid: String) -> Result<UserEntity, Error> {
         let user = user_store
             .find(uid)
             .first::<UserStore>(db_conn)
             .map_err(|_| Error::UserByidNotFound)?;
 
-        let user_entity = UserEntity{
+        let user_entity = UserEntity {
             uid: user.uid,
             cert: user.cert,
             last_tx_time: user.last_tx_time.timestamp_millis(),
@@ -179,7 +184,7 @@ impl UserModule {
 
         let mut rets = Vec::<UserEntity>::new();
         for user in users {
-            rets.push(UserEntity{
+            rets.push(UserEntity {
                 uid: user.uid,
                 cert: user.cert,
                 last_tx_time: user.last_tx_time.timestamp_millis(),
@@ -199,38 +204,64 @@ impl Actor for UserModule {
 
 impl Handler<Call> for UserModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
-    fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
+        let mod_name = self.name();
+        let bus_addr = self.bus_addr.clone().unwrap();
+        let priority = self.priority;
 
         Box::pin(async move {
-            let method: &str = &_msg.method;
+            let method: &str = &msg.method;
             let db_conn = pool.get().unwrap();
 
-            let resp = match method{
+            let resp = match method {
+                "mod_initial" => {
+                    let params: ModInitialParam =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                    if params.priority != priority {
+                        return Ok(json!(ModStatus::Ignore));
+                    }
+
+                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
+                        ModStatus::InitalSuccess
+                    } else {
+                        ModStatus::InitalFailed
+                    };
+
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "prepare",
+                        "mod_initial_return",
+                        json!(ModStatusPullParam {
+                            mod_name: mod_name,
+                            is_prepare: initialed.clone(),
+                        })
+                    );
+
+                    json!(initialed)
+                }
                 "add_user" => {
-                    let param: UserEntity = match serde_json::from_value(_msg.args) {
+                    let param: UserEntity = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::add_user(&db_conn, &param)
-                        .map_err(|err| err.to_ewf_error())?)
-                },
+                    json!(Self::add_user(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
+                }
                 "query_user" => {
-                    let param: String = match serde_json::from_value(_msg.args) {
+                    let param: String = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::query_user(&db_conn, param)
-                        .map_err(|err| err.to_ewf_error())?)
-                },
+                    json!(Self::query_user(&db_conn, param).map_err(|err| err.to_ewf_error())?)
+                }
                 "query_user_comb" => {
-                    let param: QueryParam = match serde_json::from_value(_msg.args) {
+                    let param: QueryParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::query_user_comb(&db_conn, &param)
-                        .map_err(|err| err.to_ewf_error())?)
-                },
+                    json!(Self::query_user_comb(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
+                }
                 _ => return Ok(Value::Null),
             };
             Ok(resp)
@@ -241,50 +272,21 @@ impl Handler<Call> for UserModule {
 impl Handler<Event> for UserModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
-        let pool = self.pool.clone();
-        let mod_name = self.name();
-        let bus_addr = self.bus_addr.clone().unwrap();
-
         Box::pin(async move {
-            let db_conn = pool.get().unwrap();
-
             let event: &str = &_msg.event;
             match event {
-                "Start" => {
-                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        ModStatus::InitalSuccess
-                    } else {
-                        ModStatus::InitalFailed
-                    };
-
-                    let prepare = bus_addr
-                        .send(CallQuery {
-                            module: "prepare".to_string(),
-                        })
-                        .await??;
-                    prepare
-                        .send(Call {
-                            method: "inital".to_string(),
-                            args: json!(ModStatusPullParam {
-                                mod_name: mod_name,
-                                is_prepare: initialed,
-                            }),
-                        })
-                        .await??;
-                }
                 // no care this event, ignore
                 _ => return Ok(()),
             }
-
-            Ok(())
         })
     }
 }
 
 impl Handler<StartNotify> for UserModule {
     type Result = ();
-    fn handle(&mut self, _msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
-        self.bus_addr = Some(_msg.addr);
+    fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
+        self.bus_addr = Some(msg.addr);
+        self.priority = msg.priority;
     }
 }
 
@@ -297,7 +299,6 @@ impl Module for UserModule {
         "0.1.0".to_string()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -314,7 +315,7 @@ mod tests {
         UserModule::create(&db_conn).unwrap_or(());
         diesel::delete(user_store).execute(&db_conn).unwrap();
 
-        let exampe_user = UserEntity{
+        let exampe_user = UserEntity {
             uid: "uid_001".to_string(),
             cert: "asdasdasd".to_string(),
             last_tx_time: 1596608177111,
@@ -330,12 +331,16 @@ mod tests {
         assert_eq!(1596608177111, ans.last_tx_time);
         assert_eq!("test-account", ans.account);
 
-        let ans = UserModule::query_user_comb(&db_conn, &QueryParam{
-            page_items: 10,
-            page_num: 1,
-            order_by: "".to_string(),
-            is_asc_order: true,
-        }).unwrap();
+        let ans = UserModule::query_user_comb(
+            &db_conn,
+            &QueryParam {
+                page_items: 10,
+                page_num: 1,
+                order_by: "".to_string(),
+                is_asc_order: true,
+            },
+        )
+        .unwrap();
 
         assert_eq!("uid_001", ans[0].uid);
         assert_eq!("asdasdasd", ans[0].cert);

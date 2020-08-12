@@ -7,7 +7,7 @@ use common_structure::get_rng_core;
 use ewf_core::error::Error as EwfError;
 use ewf_core::states::TransactionMachine;
 use ewf_core::{async_parse_check, call_mod_througth_bus, call_self, sync_parse_check};
-use ewf_core::{Bus, Call, CallQuery, CreateMachine, Event, Module, StartNotify};
+use ewf_core::{Bus, Call, CreateMachine, Event, Module, StartNotify};
 use hex::ToHex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::collections::hash_map::HashMap;
 use std::time::Duration;
 use wallet_common::connect::*;
-use wallet_common::prepare::{ModStatus, ModStatusPullParam};
+use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
 use wallet_common::transaction::*;
 
 const CHECK_CLOSE_INTERVAL: u64 = 3;
@@ -93,6 +93,9 @@ pub struct TransactionModule {
     bus_addr: Option<Addr<Bus>>,
     tx_sm_datas: HashMap<u64, TransactionPayload>,
     tx_link: HashMap<String, u64>,
+
+    /// 启动优先级
+    priority: i32,
 }
 
 impl TransactionModule {
@@ -101,6 +104,7 @@ impl TransactionModule {
             bus_addr: None,
             tx_sm_datas: HashMap::<u64, TransactionPayload>::new(),
             tx_link: HashMap::<String, u64>::new(),
+            priority: 0,
         }
     }
 }
@@ -116,9 +120,31 @@ impl Handler<Call> for TransactionModule {
     fn handle(&mut self, msg: Call, ctx: &mut Context<Self>) -> Self::Result {
         let bus_addr = self.bus_addr.clone().unwrap();
         let self_addr = ctx.address();
+        let mod_name = self.name();
+        let priority = self.priority;
 
         let method: &str = &msg.method;
         match method {
+            "mod_initial" => Box::pin(async move {
+                let params: ModInitialParam =
+                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                if params.priority != priority {
+                    return Ok(json!(ModStatus::Ignore));
+                }
+
+                call_mod_througth_bus!(
+                    bus_addr,
+                    "prepare",
+                    "mod_initial_return",
+                    json!(ModStatusPullParam {
+                        mod_name: mod_name,
+                        is_prepare: ModStatus::InitalSuccess,
+                    })
+                );
+
+                Ok(json!(ModStatus::InitalSuccess))
+            }),
             "tx_send" => Box::pin(async move {
                 let params: TXSendRequest =
                     async_parse_check!(msg.args, EwfError::CallParamValidFaild);
@@ -199,38 +225,8 @@ impl Handler<Call> for TransactionModule {
 impl Handler<Event> for TransactionModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
-        let bus_addr = self.bus_addr.clone().unwrap();
-        let mod_name = self.name();
-
-        fn close_check_task(_self: &mut TransactionModule, ctx: &mut Context<TransactionModule>) {
-            ctx.notify(Call {
-                method: "run_close_check_task".to_string(),
-                args: Value::Null,
-            });
-        }
-
-        // 启动定时器关闭死链接
-        _ctx.run_interval(Duration::new(CHECK_CLOSE_INTERVAL, 0), close_check_task);
-
         let event: &str = &msg.event;
         match event {
-            "Start" => Box::pin(async move {
-                let prepare = bus_addr
-                    .send(CallQuery {
-                        module: "prepare".to_string(),
-                    })
-                    .await??;
-                prepare
-                    .send(Call {
-                        method: "inital".to_string(),
-                        args: json!(ModStatusPullParam {
-                            mod_name,
-                            is_prepare: ModStatus::InitalSuccess
-                        }),
-                    })
-                    .await??;
-                Ok(())
-            }),
             // no care this event, ignore
             _ => Box::pin(async move { Ok(()) }),
         }
@@ -241,6 +237,17 @@ impl Handler<StartNotify> for TransactionModule {
     type Result = ();
     fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr);
+        self.priority = msg.priority;
+
+        fn close_check_task(_self: &mut TransactionModule, ctx: &mut Context<TransactionModule>) {
+            ctx.notify(Call {
+                method: "run_close_check_task".to_string(),
+                args: Value::Null,
+            });
+        }
+
+        // 启动定时器关闭死链接
+        _ctx.run_interval(Duration::new(CHECK_CLOSE_INTERVAL, 0), close_check_task);
     }
 }
 

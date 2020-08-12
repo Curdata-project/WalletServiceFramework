@@ -4,13 +4,13 @@ use actix::prelude::*;
 use currencies::CurrenciesModule;
 use ewf_core::states::WalletMachine;
 use ewf_core::Bus;
+use history::HistoryModule;
 use prepare::PrepareModule;
 use secret::SecretModule;
 use transaction::TransactionModule;
 use tx_conn_local::TXConnModule;
-use websocket::WebSocketModule;
-use history::HistoryModule;
 use user::UserModule;
+use websocket::WebSocketModule;
 
 fn start_sm_wallet() {
     use env_logger::Env;
@@ -21,12 +21,11 @@ fn start_sm_wallet() {
     let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
     let currencies = CurrenciesModule::new("test.db".to_string()).unwrap();
     let secret = SecretModule::new("test.db".to_string()).unwrap();
-    let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
     let transaction = TransactionModule::new();
-    let history = HistoryModule::new();
-    let user = UserModule::new();
+    let history = HistoryModule::new("test.db".to_string()).unwrap();
+    let user = UserModule::new("test.db".to_string()).unwrap();
     let tx_conn = TXConnModule::new();
-    let prepare = PrepareModule::new(vec![
+    let prepare = PrepareModule::new(1, 50, vec![
         "currencies",
         "webscoket_jsonrpc",
         "secret",

@@ -19,16 +19,14 @@ use chrono::NaiveDateTime;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
+use ewf_core::{async_parse_check, call_mod_througth_bus};
+use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
 
-use wallet_common::history::{
-    HistoryEntity,
-    TransType,
-};
-use wallet_common::prepare::{ModStatus, ModStatusPullParam};
-use wallet_common::query::{QueryParam};
+use wallet_common::history::{HistoryEntity, TransType};
+use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use wallet_common::query::QueryParam;
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -49,6 +47,9 @@ CREATE TABLE "history_store" (
 pub struct HistoryModule {
     pool: LocalPool,
     bus_addr: Option<Addr<Bus>>,
+
+    /// 启动优先级
+    priority: i32,
 }
 
 impl fmt::Debug for HistoryModule {
@@ -63,6 +64,7 @@ impl HistoryModule {
             pool: Pool::new(ConnectionManager::new(&path))
                 .map_err(|_| EwfError::ModuleInstanceError)?,
             bus_addr: None,
+            priority: 0,
         })
     }
 
@@ -129,20 +131,23 @@ impl HistoryModule {
     ///     传入交易历史条目
     /// 异常信息
     ///     
-    fn add_history(
-        db_conn: &SqliteConnection,
-        history: &HistoryEntity,
-    ) -> Result<(), Error> {
-        Self::insert(db_conn, &NewHistoryStore{
-            uid: &history.uid,
-            txid: &history.txid,
-            trans_type: history.trans_type.to_int16(),
-            oppo_uid: &history.oppo_uid,
-            occur_time: &NaiveDateTime::from_timestamp(history.occur_time / 1000, (history.occur_time % 1000 * 1_000_000) as u32),
-            amount: history.amount as i64,
-            balance: history.balance as i64,
-            remark: &history.remark,
-        })?;
+    fn add_history(db_conn: &SqliteConnection, history: &HistoryEntity) -> Result<(), Error> {
+        Self::insert(
+            db_conn,
+            &NewHistoryStore {
+                uid: &history.uid,
+                txid: &history.txid,
+                trans_type: history.trans_type.to_int16(),
+                oppo_uid: &history.oppo_uid,
+                occur_time: &NaiveDateTime::from_timestamp(
+                    history.occur_time / 1000,
+                    (history.occur_time % 1000 * 1_000_000) as u32,
+                ),
+                amount: history.amount as i64,
+                balance: history.balance as i64,
+                remark: &history.remark,
+            },
+        )?;
         Ok(())
     }
 
@@ -165,7 +170,7 @@ impl HistoryModule {
 
         let mut rets = Vec::<HistoryEntity>::new();
         for history in historys {
-            rets.push(HistoryEntity{
+            rets.push(HistoryEntity {
                 uid: history.uid,
                 txid: history.txid,
                 trans_type: TransType::from_int16(history.trans_type),
@@ -189,24 +194,52 @@ impl Actor for HistoryModule {
 
 impl Handler<Call> for HistoryModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
-    fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
+        let mod_name = self.name();
+        let bus_addr = self.bus_addr.clone().unwrap();
+        let priority = self.priority;
 
         Box::pin(async move {
-            let method: &str = &_msg.method;
+            let method: &str = &msg.method;
             let db_conn = pool.get().unwrap();
 
-            let resp = match method{
+            let resp = match method {
+                "mod_initial" => {
+                    let params: ModInitialParam =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                    if params.priority != priority {
+                        return Ok(json!(ModStatus::Ignore));
+                    }
+
+                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
+                        ModStatus::InitalSuccess
+                    } else {
+                        ModStatus::InitalFailed
+                    };
+
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "prepare",
+                        "mod_initial_return",
+                        json!(ModStatusPullParam {
+                            mod_name: mod_name,
+                            is_prepare: initialed.clone(),
+                        })
+                    );
+
+                    json!(initialed)
+                }
                 "add_history" => {
-                    let param: HistoryEntity = match serde_json::from_value(_msg.args) {
+                    let param: HistoryEntity = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::add_history(&db_conn, &param)
-                        .map_err(|err| err.to_ewf_error())?)
+                    json!(Self::add_history(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
                 }
                 "query_history_comb" => {
-                    let param: QueryParam = match serde_json::from_value(_msg.args) {
+                    let param: QueryParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
@@ -224,50 +257,21 @@ impl Handler<Call> for HistoryModule {
 impl Handler<Event> for HistoryModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
-        let pool = self.pool.clone();
-        let mod_name = self.name();
-        let bus_addr = self.bus_addr.clone().unwrap();
-
         Box::pin(async move {
-            let db_conn = pool.get().unwrap();
-
             let event: &str = &_msg.event;
             match event {
-                "Start" => {
-                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        ModStatus::InitalSuccess
-                    } else {
-                        ModStatus::InitalFailed
-                    };
-
-                    let prepare = bus_addr
-                        .send(CallQuery {
-                            module: "prepare".to_string(),
-                        })
-                        .await??;
-                    prepare
-                        .send(Call {
-                            method: "inital".to_string(),
-                            args: json!(ModStatusPullParam {
-                                mod_name: mod_name,
-                                is_prepare: initialed,
-                            }),
-                        })
-                        .await??;
-                }
                 // no care this event, ignore
                 _ => return Ok(()),
             }
-
-            Ok(())
         })
     }
 }
 
 impl Handler<StartNotify> for HistoryModule {
     type Result = ();
-    fn handle(&mut self, _msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
-        self.bus_addr = Some(_msg.addr);
+    fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
+        self.bus_addr = Some(msg.addr);
+        self.priority = msg.priority;
     }
 }
 
@@ -280,7 +284,6 @@ impl Module for HistoryModule {
         "0.1.0".to_string()
     }
 }
-
 
 #[cfg(test)]
 mod tests {

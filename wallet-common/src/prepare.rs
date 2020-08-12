@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModStatus {
-    UnInital,
+    Ignore,
     InitalSuccess,
     InitalFailed,
 }
@@ -11,4 +11,9 @@ pub enum ModStatus {
 pub struct ModStatusPullParam {
     pub mod_name: String,
     pub is_prepare: ModStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModInitialParam {
+    pub priority: i32,
 }

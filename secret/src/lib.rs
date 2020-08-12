@@ -21,7 +21,8 @@ use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
+use ewf_core::{async_parse_check, call_mod_througth_bus};
+use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use hex::{FromHex, ToHex};
 use kv_object::sm2::{CertificateSm2, KeyPairSm2};
 use rand::RngCore;
@@ -29,7 +30,7 @@ use serde_json::{json, Value};
 use std::fmt;
 
 use wallet_common::http_cli::reqwest_json;
-use wallet_common::prepare::{ModStatus, ModStatusPullParam};
+use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
 use wallet_common::secret::{
     CertificateEntity, KeyPairEntity, RegisterParam, RegisterRequest, RegisterResponse,
     SecretEntity,
@@ -51,6 +52,9 @@ CREATE TABLE "secret_store" (
 pub struct SecretModule {
     pool: LocalPool,
     bus_addr: Option<Addr<Bus>>,
+
+    /// 启动优先级
+    priority: i32,
 }
 
 impl fmt::Debug for SecretModule {
@@ -65,6 +69,7 @@ impl SecretModule {
             pool: Pool::new(ConnectionManager::new(&path))
                 .map_err(|_| EwfError::ModuleInstanceError)?,
             bus_addr: None,
+            priority: 0,
         })
     }
 
@@ -239,16 +244,45 @@ impl Actor for SecretModule {
 
 impl Handler<Call> for SecretModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
-    fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
+        let mod_name = self.name();
+        let bus_addr = self.bus_addr.clone().unwrap();
+        let priority = self.priority;
 
         Box::pin(async move {
             let db_conn = pool.get().unwrap();
 
-            let method: &str = &_msg.method;
+            let method: &str = &msg.method;
             let resp = match method {
+                "mod_initial" => {
+                    let params: ModInitialParam =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                    if params.priority != priority {
+                        return Ok(json!(ModStatus::Ignore));
+                    }
+
+                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
+                        ModStatus::InitalSuccess
+                    } else {
+                        ModStatus::InitalFailed
+                    };
+
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "prepare",
+                        "mod_initial_return",
+                        json!(ModStatusPullParam {
+                            mod_name: mod_name,
+                            is_prepare: initialed.clone(),
+                        })
+                    );
+
+                    json!(initialed)
+                }
                 "gen_and_register" => {
-                    let param: RegisterParam = match serde_json::from_value(_msg.args) {
+                    let param: RegisterParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
@@ -257,7 +291,7 @@ impl Handler<Call> for SecretModule {
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 "get_secret" => {
-                    let param: String = match serde_json::from_value(_msg.args) {
+                    let param: String = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
@@ -274,50 +308,21 @@ impl Handler<Call> for SecretModule {
 impl Handler<Event> for SecretModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
-        let pool = self.pool.clone();
-        let mod_name = self.name();
-        let bus_addr = self.bus_addr.clone().unwrap();
-
         Box::pin(async move {
-            let db_conn = pool.get().unwrap();
-
             let event: &str = &_msg.event;
             match event {
-                "Start" => {
-                    let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
-                        ModStatus::InitalSuccess
-                    } else {
-                        ModStatus::InitalFailed
-                    };
-
-                    let prepare = bus_addr
-                        .send(CallQuery {
-                            module: "prepare".to_string(),
-                        })
-                        .await??;
-                    prepare
-                        .send(Call {
-                            method: "inital".to_string(),
-                            args: json!(ModStatusPullParam {
-                                mod_name: mod_name,
-                                is_prepare: initialed,
-                            }),
-                        })
-                        .await??;
-                }
                 // no care this event, ignore
                 _ => return Ok(()),
             }
-
-            Ok(())
         })
     }
 }
 
 impl Handler<StartNotify> for SecretModule {
     type Result = ();
-    fn handle(&mut self, _msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
-        self.bus_addr = Some(_msg.addr);
+    fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
+        self.bus_addr = Some(msg.addr);
+        self.priority = msg.priority;
     }
 }
 

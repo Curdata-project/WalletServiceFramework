@@ -40,83 +40,85 @@ impl Handler<Call> for TXConnModule {
     fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let conn_mgr_addr = self.conn_mgr_addr.clone().unwrap();
 
-        let method: &str = &msg.method;
-        match method {
-            "bind_listen" => Box::pin(async move {
-                let params: BindTransPortParam =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+        Box::pin(async move {
+            let method: &str = &msg.method;
+            match method {
+                "bind_listen" => {
+                    let params: BindTransPortParam =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                conn_mgr_addr
-                    .send(conn_mgr::MemFnBindListenParam { uid: params.uid })
-                    .await?;
+                    conn_mgr_addr
+                        .send(conn_mgr::MemFnBindListenParam { uid: params.uid })
+                        .await?;
 
-                Ok(Value::Null)
-            }),
-            "close_bind" => Box::pin(async move {
-                let params: CloseBindTransPortParam =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+                    Ok(Value::Null)
+                },
+                "close_bind" => {
+                    let params: CloseBindTransPortParam =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                conn_mgr_addr
-                    .send(conn_mgr::MemFnCloseBindParam { uid: params.uid })
-                    .await?;
+                    conn_mgr_addr
+                        .send(conn_mgr::MemFnCloseBindParam { uid: params.uid })
+                        .await?;
 
-                Ok(Value::Null)
-            }),
-            "connect" => Box::pin(async move {
-                let params: ConnectRequest =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+                    Ok(Value::Null)
+                },
+                "connect" => {
+                    let params: ConnectRequest =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                conn_mgr_addr
-                    .send(conn_mgr::MemFnConnectParam {
-                        self_uid: params.uid,
-                        peer_uid: params.oppo_peer_uid,
-                        txid: params.txid,
-                    })
-                    .await?
-                    .map_err(|err| err.to_ewf_error())?;
+                    conn_mgr_addr
+                        .send(conn_mgr::MemFnConnectParam {
+                            self_uid: params.uid,
+                            peer_uid: params.oppo_peer_uid,
+                            txid: params.txid,
+                        })
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
 
-                Ok(Value::Null)
-            }),
-            "close_conn" => Box::pin(async move {
-                let params: CloseConnectRequest =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+                    Ok(Value::Null)
+                },
+                "close_conn" => {
+                    let params: CloseConnectRequest =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                conn_mgr_addr
-                    .send(conn_mgr::MemFnCloseParam { txid: params.txid })
-                    .await?;
+                    conn_mgr_addr
+                        .send(conn_mgr::MemFnCloseParam { txid: params.txid })
+                        .await?;
 
-                Ok(Value::Null)
-            }),
-            "send_tx_msg" => Box::pin(async move {
-                let params: SendMsgPackage =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+                    Ok(Value::Null)
+                },
+                "send_tx_msg" => {
+                    let params: SendMsgPackage =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                conn_mgr_addr
-                    .send(conn_mgr::MemFnSendParam {
-                        send_uid: params.send_uid,
-                        txid: params.msg.txid,
-                        data: params.msg.data,
-                    })
-                    .await?
-                    .map_err(|err| err.to_ewf_error())?;
+                    conn_mgr_addr
+                        .send(conn_mgr::MemFnSendParam {
+                            send_uid: params.send_uid,
+                            txid: params.msg.txid,
+                            data: params.msg.data,
+                        })
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
 
-                Ok(Value::Null)
-            }),
-            "recv_tx_msg" => Box::pin(async move {
-                let params: RecvMsgPackage =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+                    Ok(Value::Null)
+                },
+                "recv_tx_msg" => {
+                    let params: RecvMsgPackage =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                log::debug!(
-                    "RECV: UID {} TX {} => DATA {}",
-                    params.recv_uid,
-                    params.msg.txid,
-                    params.msg.data
-                );
+                    log::debug!(
+                        "RECV: UID {} TX {} => DATA {}",
+                        params.recv_uid,
+                        params.msg.txid,
+                        params.msg.data
+                    );
 
-                Ok(Value::Null)
-            }),
-            _ => Box::pin(async move { Ok(Value::Null) }),
-        }
+                    Ok(Value::Null)
+                },
+                _ => Ok(Value::Null),
+            }
+        })
     }
 }
 

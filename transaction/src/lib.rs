@@ -1,28 +1,22 @@
 use std::fmt;
 
-#[macro_export]
-extern crate ewf_core;
-
 use actix::prelude::*;
 use chrono::prelude::Local;
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::get_rng_core;
-use common_structure::transaction::TransactionWrapper;
 use ewf_core::error::Error as EwfError;
 use ewf_core::states::TransactionMachine;
-use ewf_core::{call_mod_througth_bus, call_self};
-use ewf_core::{
-    Bus, Call, CallQuery, CreateMachine, DestoryMachine, Event, Module, StartNotify, Transition,
-};
+use ewf_core::{async_parse_check, call_mod_througth_bus, call_self, sync_parse_check};
+use ewf_core::{Bus, Call, CallQuery, CreateMachine, Event, Module, StartNotify};
 use hex::ToHex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::HashMap;
 use std::time::Duration;
+use wallet_common::connect::*;
 use wallet_common::prepare::{ModStatus, ModStatusPullParam};
-use wallet_common::transaction::{TXCloseRequest, TXSendResponse};
-use wallet_common::WALLET_SM_CODE;
+use wallet_common::transaction::*;
 
 const CHECK_CLOSE_INTERVAL: u64 = 3;
 const MAX_CLOSE_TIME_MS: i64 = 2000;
@@ -33,7 +27,6 @@ const BUG_ERROR_PANIC: &str = "found a bug";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TXSendSaveInput {
     pub tx_sm_id: u64,
-    pub conn_info: Value,
 }
 
 impl From<Value> for TXSendSaveInput {
@@ -62,15 +55,15 @@ pub struct TransactionPayload {
     pub recv_plan: Vec<(u64, u64)>,
     pub pay_list: Vec<DigitalCurrencyWrapper>,
 
+    // 使用txid与conn管理交互
     pub txid: String,
 
-    pub conn_info: Value,
     pub tx_sm_id: u64,
     pub last_update_time: i64,
 }
 
 impl TransactionPayload {
-    fn new(tx_sm_id: u64, conn_info: Value, txid: String) -> Self {
+    fn new(tx_sm_id: u64, txid: String) -> Self {
         Self {
             uid: "".to_string(),
             is_payer: false,
@@ -80,7 +73,6 @@ impl TransactionPayload {
             recv_plan: Vec::<(u64, u64)>::new(),
             pay_list: Vec::<DigitalCurrencyWrapper>::new(),
             txid,
-            conn_info,
             tx_sm_id,
             last_update_time: Local::now().timestamp_millis(),
         }
@@ -128,6 +120,9 @@ impl Handler<Call> for TransactionModule {
         let method: &str = &msg.method;
         match method {
             "tx_send" => Box::pin(async move {
+                let params: TXSendRequest =
+                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
                 // 创建状态机
                 let tx_sm_id = bus_addr
                     .send(CreateMachine {
@@ -135,31 +130,32 @@ impl Handler<Call> for TransactionModule {
                     })
                     .await?;
 
-                // 申请链接
-                let conn_info: Value =
-                    call_mod_througth_bus!(bus_addr, "tx_conn", "connect_wait", Value::Null);
+                let save_ans: TXSendSaveOutput =
+                    call_self!(self_addr, "tx_save_cb", json!(TXSendSaveInput { tx_sm_id })).into();
 
-                let save_ans: TXSendSaveOutput = call_self!(
-                    self_addr,
-                    "tx_save_cb",
-                    json!(TXSendSaveInput {
-                        tx_sm_id,
-                        conn_info: conn_info.clone()
+                // 建立链接，若此处连接失败，创建的状态机等随超时回收
+                call_mod_througth_bus!(
+                    bus_addr,
+                    "tx_conn",
+                    "connect",
+                    json!(ConnectRequest {
+                        uid: params.uid,
+                        oppo_peer_uid: params.oppo_peer_uid,
+                        txid: save_ans.txid.clone(),
                     })
-                )
-                .into();
+                );
 
                 Ok(json!(TXSendResponse {
                     txid: save_ans.txid,
-                    conn_info
                 }))
             }),
             "tx_save_cb" => {
-                let params: TXSendSaveInput = msg.args.into();
+                let params: TXSendSaveInput =
+                    sync_parse_check!(msg.args, EwfError::CallParamValidFaild);
                 let new_tx_id = TransactionPayload::gen_txid();
                 self.tx_sm_datas.insert(
                     params.tx_sm_id,
-                    TransactionPayload::new(params.tx_sm_id, params.conn_info, new_tx_id.clone()),
+                    TransactionPayload::new(params.tx_sm_id, new_tx_id.clone()),
                 );
                 self.tx_link.insert(new_tx_id.clone(), params.tx_sm_id);
 
@@ -186,7 +182,8 @@ impl Handler<Call> for TransactionModule {
                 Box::pin(async move { Ok(Value::Null) })
             }
             "tx_close" => {
-                let params: TXCloseRequest = serde_json::from_value(msg.args).unwrap();
+                let params: TXCloseRequest =
+                    sync_parse_check!(msg.args, EwfError::CallParamValidFaild);
                 if let Some(tx_sm_id) = self.tx_link.get_mut(&params.txid) {
                     self.tx_sm_datas.remove(&tx_sm_id);
                 }
@@ -203,10 +200,9 @@ impl Handler<Event> for TransactionModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
         let bus_addr = self.bus_addr.clone().unwrap();
-        let self_addr = _ctx.address();
         let mod_name = self.name();
 
-        fn close_check_task(self_: &mut TransactionModule, ctx: &mut Context<TransactionModule>) {
+        fn close_check_task(_self: &mut TransactionModule, ctx: &mut Context<TransactionModule>) {
             ctx.notify(Call {
                 method: "run_close_check_task".to_string(),
                 args: Value::Null,
@@ -244,12 +240,7 @@ impl Handler<Event> for TransactionModule {
 impl Handler<StartNotify> for TransactionModule {
     type Result = ();
     fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
-        self.bus_addr = Some(msg.addr.clone());
-
-        msg.addr.do_send(Transition {
-            id: WALLET_SM_CODE,
-            transition: "Starting".to_string(),
-        });
+        self.bus_addr = Some(msg.addr);
     }
 }
 

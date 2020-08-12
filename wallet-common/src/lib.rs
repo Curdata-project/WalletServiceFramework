@@ -11,5 +11,3 @@ pub mod transaction;
 pub mod connect;
 
 pub const WALLET_SM_CODE: u64 = 0u64;
-
-pub const TRANSACTION_SM_CODE: u64 = 1u64;

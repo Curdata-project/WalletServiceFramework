@@ -39,7 +39,7 @@ async fn route_once(redirecter: Addr<WebSocketModule>, req: Value) -> Value {
         })
         .await
     {
-        Ok(Ok(resp)) => resp,
+        Ok(Ok(resp)) => serde_json::to_value(JsonRpc::success(req.id, &resp)).unwrap(),
         Ok(Err(EwfError::MethodNotFoundError)) => {
             jsonrpc_id_error_to_value(req.id, JsonRpcError::method_not_found())
         }

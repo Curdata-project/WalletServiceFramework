@@ -2,11 +2,12 @@ extern crate websocket;
 
 use actix::prelude::*;
 use currencies::CurrenciesModule;
-use ewf_core::states::{TransactionMachine, WalletMachine};
+use ewf_core::states::WalletMachine;
 use ewf_core::Bus;
 use prepare::PrepareModule;
 use secret::SecretModule;
 use transaction::TransactionModule;
+use tx_conn_local::TXConnModule;
 use websocket::WebSocketModule;
 
 fn start_sm_wallet() {
@@ -19,12 +20,13 @@ fn start_sm_wallet() {
     let secret = SecretModule::new("test.db".to_string()).unwrap();
     let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
     let transaction = TransactionModule::new();
-    //let tx_conn = TransactionModule::new();
+    let tx_conn = TXConnModule::new();
     let prepare = PrepareModule::new(vec![
         "currencies",
         "webscoket_jsonrpc",
         "secret",
         "transaction",
+        "tx_conn",
     ]);
 
     wallet_bus
@@ -33,7 +35,8 @@ fn start_sm_wallet() {
         .module(2, secret)
         .module(3, ws_server)
         .module(4, transaction)
-        .module(5, prepare);
+        .module(5, tx_conn)
+        .module(6, prepare);
 
     wallet_bus.start();
 }

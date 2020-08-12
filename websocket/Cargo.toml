@@ -27,4 +27,5 @@ prepare = { path = "../prepare" }
 currencies = { path = "../currencies" }
 secret = { path = "../secret" }
 transaction = { path = "../transaction" }
+tx-conn-local = { path = "../tx-conn-local" }
 env_logger = "0.7"

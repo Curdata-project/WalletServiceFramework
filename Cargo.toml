@@ -9,7 +9,9 @@ members = [
     "prepare",
     "secret",
     "transaction",
-    "tx-conn-local"
+    "tx-conn-local",
+    "history",
+    "user"
 ]
 
 

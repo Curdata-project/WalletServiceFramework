@@ -28,4 +28,6 @@ currencies = { path = "../currencies" }
 secret = { path = "../secret" }
 transaction = { path = "../transaction" }
 tx-conn-local = { path = "../tx-conn-local" }
+history = { path = "../history" }
+user = { path = "../user" }
 env_logger = "0.7"

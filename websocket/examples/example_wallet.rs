@@ -9,6 +9,8 @@ use secret::SecretModule;
 use transaction::TransactionModule;
 use tx_conn_local::TXConnModule;
 use websocket::WebSocketModule;
+use history::HistoryModule;
+use user::UserModule;
 
 fn start_sm_wallet() {
     use env_logger::Env;
@@ -16,16 +18,21 @@ fn start_sm_wallet() {
 
     let mut wallet_bus: Bus = Bus::new();
 
+    let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
     let currencies = CurrenciesModule::new("test.db".to_string()).unwrap();
     let secret = SecretModule::new("test.db".to_string()).unwrap();
     let ws_server = WebSocketModule::new("127.0.0.1:9000".to_string());
     let transaction = TransactionModule::new();
+    let history = HistoryModule::new();
+    let user = UserModule::new();
     let tx_conn = TXConnModule::new();
     let prepare = PrepareModule::new(vec![
         "currencies",
         "webscoket_jsonrpc",
         "secret",
         "transaction",
+        "history",
+        "user",
         "tx_conn",
     ]);
 
@@ -35,8 +42,10 @@ fn start_sm_wallet() {
         .module(2, secret)
         .module(3, ws_server)
         .module(4, transaction)
-        .module(5, tx_conn)
-        .module(6, prepare);
+        .module(5, history)
+        .module(6, user)
+        .module(7, tx_conn)
+        .module(8, prepare);
 
     wallet_bus.start();
 }

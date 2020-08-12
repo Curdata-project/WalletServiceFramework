@@ -24,6 +24,7 @@ pub struct Call {
 #[rtype(result = "()")]
 pub struct StartNotify {
     pub addr: Addr<Bus>,
+    pub priority: i32,
 }
 
 #[derive(Debug, Message, Clone)]

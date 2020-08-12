@@ -47,11 +47,15 @@ impl Actor for Bus {
         self.priorities.sort();
         self.addr = Some(ctx.address());
 
-        for v in self.start_caller.values() {
-            v.do_send(StartNotify {
-                addr: ctx.address(),
-            })
-            .unwrap();
+        for pp in self.priorities.iter() {
+            if let Some(caller) = self.start_caller.get(&pp.1) {
+                caller
+                    .do_send(StartNotify {
+                        addr: ctx.address(),
+                        priority: pp.0,
+                    })
+                    .unwrap();
+            }
         }
     }
 }

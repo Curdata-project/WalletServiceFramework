@@ -29,3 +29,15 @@ pub struct MsgPackage {
     pub txid: String,
     pub data: Value,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendMsgPackage {
+    pub msg: MsgPackage,
+    pub send_uid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecvMsgPackage {
+    pub msg: MsgPackage,
+    pub recv_uid: String,
+}

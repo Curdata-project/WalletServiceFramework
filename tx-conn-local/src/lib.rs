@@ -88,13 +88,14 @@ impl Handler<Call> for TXConnModule {
                 Ok(Value::Null)
             }),
             "send_tx_msg" => Box::pin(async move {
-                let params: MsgPackage =
+                let params: SendMsgPackage =
                     async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
                 conn_mgr_addr
                     .send(conn_mgr::MemFnSendParam {
-                        txid: params.txid,
-                        data: params.data,
+                        send_uid: params.send_uid,
+                        txid: params.msg.txid,
+                        data: params.msg.data,
                     })
                     .await?
                     .map_err(|err| err.to_ewf_error())?;
@@ -102,10 +103,15 @@ impl Handler<Call> for TXConnModule {
                 Ok(Value::Null)
             }),
             "recv_tx_msg" => Box::pin(async move {
-                let params: MsgPackage =
+                let params: RecvMsgPackage =
                     async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                log::debug!("RECV: TX {} => DATA {}", params.txid, params.data);
+                log::debug!(
+                    "RECV: UID {} TX {} => DATA {}",
+                    params.recv_uid,
+                    params.msg.txid,
+                    params.msg.data
+                );
 
                 Ok(Value::Null)
             }),

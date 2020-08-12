@@ -23,7 +23,9 @@ struct ListenObj {
 struct ConnectObj {
     uid: String,
     oppo_uid: String,
-    conn: mpsc::Sender<MsgPackage>,
+
+    connect_sender: mpsc::Sender<MsgPackage>,
+    connected_sender: mpsc::Sender<MsgPackage>,
 }
 
 pub(crate) struct ConnMgr {
@@ -85,7 +87,16 @@ impl ConnMgr {
             .uid_listen
             .get(&peer_uid)
             .ok_or(Error::TXConnectError)?;
-        let conn = self
+        let connect_sender = self
+            .conn_bridge
+            .get(&listen_obj.peer_code)
+            .ok_or(Error::TXConnectError)?;
+
+        let listen_obj = self
+            .uid_listen
+            .get(&self_uid)
+            .ok_or(Error::TXConnectError)?;
+        let connected_sender = self
             .conn_bridge
             .get(&listen_obj.peer_code)
             .ok_or(Error::TXConnectError)?;
@@ -93,7 +104,8 @@ impl ConnMgr {
         let connect_obj = ConnectObj {
             uid: self_uid,
             oppo_uid: peer_uid,
-            conn: conn.clone(),
+            connect_sender: connect_sender.clone(),
+            connected_sender: connected_sender.clone(),
         };
 
         self.tx_conn.insert(txid, connect_obj);
@@ -159,6 +171,7 @@ pub(crate) struct MemFnCloseBindParam {
 #[derive(Debug, Message, Clone)]
 #[rtype(result = "Result<(), Error>")]
 pub(crate) struct MemFnSendParam {
+    pub send_uid: String,
     pub txid: String,
     pub data: Value,
 }
@@ -171,6 +184,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
         self.bind_listen(param.uid.clone());
 
         if let Some(listen_obj) = self.uid_listen.get_mut(&param.uid) {
+            let recv_uid = listen_obj.uid.clone();
             let mut receiver = match listen_obj.listen.take() {
                 Some(receiver) => receiver,
                 None => return,
@@ -182,9 +196,12 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                     conn_addr
                         .send(Call {
                             method: "recv_tx_msg".to_string(),
-                            args: json!(MsgPackage {
-                                txid: msg.txid,
-                                data: msg.data,
+                            args: json!(RecvMsgPackage {
+                                msg: MsgPackage {
+                                    txid: msg.txid,
+                                    data: msg.data,
+                                },
+                                recv_uid: recv_uid.clone(),
                             }),
                         })
                         .await
@@ -225,14 +242,20 @@ impl Handler<MemFnCloseBindParam> for ConnMgr {
 impl Handler<MemFnSendParam> for ConnMgr {
     type Result = ResponseFuture<Result<(), Error>>;
     fn handle(&mut self, param: MemFnSendParam, _ctx: &mut Context<Self>) -> Self::Result {
-        let mut conn_obj = match self.tx_conn.get(&param.txid) {
+        let conn_obj = match self.tx_conn.get(&param.txid) {
             Some(conn_obj) => conn_obj,
             None => return Box::pin(async move { Err(Error::TXConnectBroken) }),
         }
         .clone();
         Box::pin(async move {
-            conn_obj
-                .conn
+            let send_uid = &param.send_uid;
+            let mut use_sender = if send_uid == &conn_obj.uid {
+                conn_obj.connect_sender
+            } else {
+                conn_obj.connected_sender
+            };
+
+            use_sender
                 .send(MsgPackage {
                     txid: param.txid,
                     data: param.data,

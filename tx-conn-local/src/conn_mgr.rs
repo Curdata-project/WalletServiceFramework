@@ -8,6 +8,7 @@ use serde_json::json;
 use serde_json::Value;
 use std::collections::hash_map::HashMap;
 use wallet_common::connect::*;
+use chrono::prelude::Local;
 
 #[derive(Debug)]
 struct ListenObj {
@@ -23,6 +24,9 @@ struct ListenObj {
 struct ConnectObj {
     uid: String,
     oppo_uid: String,
+
+    // 连接建立时间 TODO可考虑根据此字段定时断开废弃连接
+    build_time: i64,
 
     connect_sender: mpsc::Sender<MsgPackage>,
     connected_sender: mpsc::Sender<MsgPackage>,
@@ -83,6 +87,10 @@ impl ConnMgr {
     }
 
     fn connect(&mut self, self_uid: String, peer_uid: String, txid: String) -> Result<(), Error> {
+        if !self.tx_conn.get(&txid).is_none() {
+            return Err(Error::TXConnectCollision);
+        }
+
         let listen_obj = self
             .uid_listen
             .get(&peer_uid)
@@ -104,6 +112,7 @@ impl ConnMgr {
         let connect_obj = ConnectObj {
             uid: self_uid,
             oppo_uid: peer_uid,
+            build_time: Local::now().timestamp_millis(),
             connect_sender: connect_sender.clone(),
             connected_sender: connected_sender.clone(),
         };

@@ -27,25 +27,34 @@ fn start_sm_wallet() {
     let tx_conn = TXConnModule::new();
     let prepare = PrepareModule::new(1, 50, vec![
         "currencies",
-        "webscoket_jsonrpc",
-        "secret",
-        "transaction",
         "history",
         "user",
+        "secret",
         "tx_conn",
+        "transaction",
+        "webscoket_jsonrpc",
     ]);
 
+    // 启动顺序依赖
+    //  secret依赖user，注册后用户信息填写
+    //        弱依赖tx_conn，注册成功立刻创建交易通道
+    //  tx_conn依赖secret，对本地密钥用户进行交易通道创建
+    //  transaction依赖tx_conn，交易依赖交易通道
+    //                 history，交易历史记录
+    //                 user，用户信息交换
+    //                 secret，交易签名
+    //                 currencies，货币存储
     wallet_bus
         .machine(WalletMachine::default())
         .module(1, currencies)
-        .module(2, secret)
-        .module(3, ws_server)
-        .module(4, transaction)
-        .module(5, history)
-        .module(6, user)
-        .module(7, tx_conn)
+        .module(2, history)
+        .module(3, user)
+        .module(4, secret)
+        .module(5, tx_conn)
+        .module(6, transaction)
+        .module(7, ws_server)
         .module(8, prepare);
-
+    
     wallet_bus.start();
 }
 

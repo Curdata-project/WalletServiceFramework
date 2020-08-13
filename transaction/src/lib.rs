@@ -215,7 +215,18 @@ impl Handler<Call> for TransactionModule {
                 }
                 self.tx_link.remove(&params.txid);
 
-                Box::pin(async move { Ok(Value::Null) })
+                Box::pin(async move { 
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "tx_conn",
+                        "connect",
+                        json!(CloseConnectRequest {
+                            txid: params.txid,
+                        })
+                    );
+
+                    Ok(Value::Null) 
+                })
             }
             _ => Box::pin(async move { Ok(Value::Null) }),
         }

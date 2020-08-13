@@ -198,7 +198,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                 Some(receiver) => receiver,
                 None => return,
             };
-            log::debug!("start listen...");
+            log::info!("uid {} listen...", param.uid);
 
             let send_to_other = actix::fut::wrap_future::<_, Self>(async move {
                 while let Some(msg) = receiver.next().await {
@@ -241,8 +241,8 @@ impl Handler<MemFnCloseParam> for ConnMgr {
 impl Handler<MemFnCloseBindParam> for ConnMgr {
     type Result = ();
     fn handle(&mut self, param: MemFnCloseBindParam, _ctx: &mut Context<Self>) -> Self::Result {
-        if let Some(close_handle) = self.close_bind(param.uid) {
-            log::debug!("close listen...");
+        if let Some(close_handle) = self.close_bind(param.uid.clone()) {
+            log::debug!("uid {} close listen", param.uid);
             _ctx.cancel_future(close_handle);
         }
     }

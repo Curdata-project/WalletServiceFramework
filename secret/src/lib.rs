@@ -8,7 +8,7 @@ mod models;
 mod schema;
 
 use crate::models::*;
-use crate::schema::secret_store::dsl::secret_store;
+use crate::schema::secret_store::dsl::{self, secret_store};
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -29,12 +29,14 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use std::fmt;
 
+use wallet_common::query::QueryParam;
 use wallet_common::http_cli::reqwest_json;
 use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
 use wallet_common::secret::{
     CertificateEntity, KeyPairEntity, RegisterParam, RegisterRequest, RegisterResponse,
     SecretEntity,
 };
+use wallet_common::user::UserEntity;
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -141,7 +143,7 @@ impl SecretModule {
     async fn gen_and_register(
         db_conn: &SqliteConnection,
         param: RegisterParam,
-    ) -> Result<String, Error> {
+    ) -> Result<SecretEntity, Error> {
         let (seed, keypair) = Self::generate_keypair_sm2()?;
         let unregister_cert = keypair.get_certificate();
 
@@ -171,7 +173,13 @@ impl SecretModule {
 
                     log::info!("wallet register success, uid {}", reg_resp.uid);
 
-                    Ok(reg_resp.uid)
+                    Self::deserialize_secret(SecretStore{
+                        uid: new_secret.uid.to_string(),
+                        secret_type: new_secret.secret_type.to_string(),
+                        seed: new_secret.seed.to_string(),
+                        keypair: new_secret.keypair.to_string(),
+                        cert: new_secret.cert.to_string(),
+                    })
                 } else {
                     log::info!(
                         "response from {} err_code {}: message {}",
@@ -211,6 +219,16 @@ impl SecretModule {
             .first::<SecretStore>(db_conn)
             .map_err(|_| Error::SecretByidNotFound)?;
 
+        Self::deserialize_secret(secret)
+    }
+
+    fn cert_to_string(cert: &CertificateEntity) -> String {
+        match cert {
+            CertificateEntity::Sm2(cert) => cert.to_bytes().encode_hex_upper::<String>(),
+        }
+    }
+
+    fn deserialize_secret(secret: SecretStore) -> Result<SecretEntity, Error> {
         let secret_type: &str = &secret.secret_type;
         Ok(match secret_type {
             "sm2" => {
@@ -219,6 +237,7 @@ impl SecretModule {
                 seed.clone_from_slice(&str_seed);
 
                 SecretEntity {
+                    uid: secret.uid,
                     secret_type: secret.secret_type,
                     keypair: KeyPairEntity::Sm2(
                         KeyPairSm2::generate_from_seed(seed).expect("data incrrect"),
@@ -233,6 +252,31 @@ impl SecretModule {
             }
             _ => return Err(Error::UnknownSecretType),
         })
+    }
+
+    /// 模块对外接口
+    /// 分页查询管理密钥信息
+    ///     传入查询条件
+    ///         order_by和asc_or_desc暂不使用
+    /// 异常信息
+    ///     
+    fn query_secret_comb(
+        db_conn: &SqliteConnection,
+        query_param: &QueryParam,
+    ) -> Result<Vec<SecretEntity>, Error> {
+        let secrets = secret_store
+            .order_by(dsl::uid.asc())
+            .limit(query_param.page_items as i64)
+            .offset((query_param.page_items * (query_param.page_num - 1)) as i64)
+            .load::<SecretStore>(db_conn)
+            .map_err(|_| Error::SecretByidNotFound)?;
+
+        let mut rets = Vec::<SecretEntity>::new();
+        for secret in secrets {
+            rets.push(Self::deserialize_secret(secret)?);
+        }
+
+        Ok(rets)
     }
 }
 
@@ -286,9 +330,34 @@ impl Handler<Call> for SecretModule {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::gen_and_register(&db_conn, param)
+
+                    let new_secret = Self::gen_and_register(&db_conn, param)
                         .await
-                        .map_err(|err| err.to_ewf_error())?)
+                        .map_err(|err| err.to_ewf_error())?;
+
+                    let new_user = UserEntity {
+                        uid: new_secret.uid.clone(),
+                        cert: Self::cert_to_string(&new_secret.cert),
+                        last_tx_time: 0,
+                        account: new_secret.uid,
+                    };
+
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "user",
+                        "add_user",
+                        json!(new_user)
+                    );
+
+                    // tx_conn在secret后启动，此处不检查错误
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "tx_conn",
+                        "bind_listen",
+                        json!(new_user)
+                    );
+
+                    json!(new_user)
                 }
                 "get_secret" => {
                     let param: String = match serde_json::from_value(msg.args) {
@@ -296,6 +365,13 @@ impl Handler<Call> for SecretModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::get_secret(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
+                }
+                "query_secret_comb" => {
+                    let param: QueryParam = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::query_secret_comb(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
                 }
                 _ => return Err(EwfError::MethodNotFoundError),
             };

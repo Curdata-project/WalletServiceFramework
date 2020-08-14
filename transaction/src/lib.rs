@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::HashMap;
 use std::time::Duration;
-use wallet_common::connect::*;
+use wallet_common::connect::{CloseConnectRequest, ConnectRequest};
 use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
-use wallet_common::transaction::*;
+use wallet_common::transaction::{TXCloseRequest, TXSendRequest, TXSendResponse};
 
 const CHECK_CLOSE_INTERVAL: u64 = 3;
 const MAX_CLOSE_TIME_MS: i64 = 2000;
@@ -170,6 +170,7 @@ impl Handler<Call> for TransactionModule {
                         txid: save_ans.txid.clone(),
                     })
                 );
+                log::info!("tx_connect {}", save_ans.txid.clone());
 
                 Ok(json!(TXSendResponse {
                     txid: save_ans.txid,
@@ -200,7 +201,9 @@ impl Handler<Call> for TransactionModule {
                     if now - pay_load.last_update_time > MAX_CLOSE_TIME_MS {
                         ctx.notify(Call {
                             method: "tx_close".to_string(),
-                            args: json!(tx_sm_id),
+                            args: json!(TXCloseRequest {
+                                txid: pay_load.txid.clone()
+                            }),
                         });
                     }
                 }
@@ -215,17 +218,17 @@ impl Handler<Call> for TransactionModule {
                 }
                 self.tx_link.remove(&params.txid);
 
-                Box::pin(async move { 
+                Box::pin(async move {
+                    log::info!("tx_close {}", params.txid);
+
                     call_mod_througth_bus!(
                         bus_addr,
                         "tx_conn",
                         "connect",
-                        json!(CloseConnectRequest {
-                            txid: params.txid,
-                        })
+                        json!(CloseConnectRequest { txid: params.txid })
                     );
 
-                    Ok(Value::Null) 
+                    Ok(Value::Null)
                 })
             }
             _ => Box::pin(async move { Ok(Value::Null) }),

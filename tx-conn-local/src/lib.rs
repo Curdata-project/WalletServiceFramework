@@ -10,11 +10,13 @@ use ewf_core::error::Error as EwfError;
 use ewf_core::{async_parse_check, call_mod_througth_bus, call_self};
 use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::json;
-use wallet_common::connect::*;
+use wallet_common::connect::{
+    BindTransPortParam, CloseBindTransPortParam, CloseConnectRequest, ConnectRequest,
+    RecvMsgPackage, SendMsgPackage,
+};
 use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
 use wallet_common::query::QueryParam;
 use wallet_common::secret::SecretEntity;
-
 
 // peer_code: u64和peer_addr: Value实际上是一致的，peer_addr为对外统一抽象，三方传递信息
 pub struct TXConnModule {
@@ -80,8 +82,12 @@ impl Handler<Call> for TXConnModule {
                             break;
                         }
 
-                        for secret in secrets{
-                            call_self!(self_addr, "bind_listen", json!(BindTransPortParam{uid: secret.uid}));
+                        for secret in secrets {
+                            call_self!(
+                                self_addr,
+                                "bind_listen",
+                                json!(BindTransPortParam { uid: secret.uid })
+                            );
                         }
                     }
 
@@ -194,7 +200,7 @@ impl Handler<StartNotify> for TXConnModule {
     fn handle(&mut self, msg: StartNotify, ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr.clone());
         self.priority = msg.priority;
-        
+
         self.conn_mgr_addr = Some(conn_mgr::ConnMgr::new(ctx.address()).start());
     }
 }

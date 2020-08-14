@@ -29,9 +29,9 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use std::fmt;
 
-use wallet_common::query::QueryParam;
 use wallet_common::http_cli::reqwest_json;
 use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use wallet_common::query::QueryParam;
 use wallet_common::secret::{
     CertificateEntity, KeyPairEntity, RegisterParam, RegisterRequest, RegisterResponse,
     SecretEntity,
@@ -173,7 +173,7 @@ impl SecretModule {
 
                     log::info!("wallet register success, uid {}", reg_resp.uid);
 
-                    Self::deserialize_secret(SecretStore{
+                    Self::deserialize_secret(SecretStore {
                         uid: new_secret.uid.to_string(),
                         secret_type: new_secret.secret_type.to_string(),
                         seed: new_secret.seed.to_string(),
@@ -342,20 +342,10 @@ impl Handler<Call> for SecretModule {
                         account: new_secret.uid,
                     };
 
-                    call_mod_througth_bus!(
-                        bus_addr,
-                        "user",
-                        "add_user",
-                        json!(new_user)
-                    );
+                    call_mod_througth_bus!(bus_addr, "user", "add_user", json!(new_user));
 
                     // tx_conn在secret后启动，此处不检查错误
-                    call_mod_througth_bus!(
-                        bus_addr,
-                        "tx_conn",
-                        "bind_listen",
-                        json!(new_user)
-                    );
+                    call_mod_througth_bus!(bus_addr, "tx_conn", "bind_listen", json!(new_user));
 
                     json!(new_user)
                 }
@@ -371,7 +361,8 @@ impl Handler<Call> for SecretModule {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::query_secret_comb(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
+                    json!(Self::query_secret_comb(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
                 }
                 _ => return Err(EwfError::MethodNotFoundError),
             };

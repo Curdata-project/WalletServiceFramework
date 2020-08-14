@@ -1,14 +1,14 @@
 use crate::error::Error;
 use crate::TXConnModule;
 use actix::prelude::*;
+use chrono::prelude::Local;
 use ewf_core::message::Call;
 use futures::channel::mpsc;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::hash_map::HashMap;
-use wallet_common::connect::*;
-use chrono::prelude::Local;
+use wallet_common::connect::{MsgPackage, RecvMsgPackage};
 
 #[derive(Debug)]
 struct ListenObj {

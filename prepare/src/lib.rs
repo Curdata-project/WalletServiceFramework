@@ -1,12 +1,12 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fmt;
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition};
 use ewf_core::{call_mod_througth_bus, call_self};
+use ewf_core::{Bus, Call, Event, Module, StartNotify, Transition};
 use std::collections::hash_map::HashMap;
-use wallet_common::prepare::{ModStatus, ModStatusPullParam, ModInitialParam};
+use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
 use wallet_common::WALLET_SM_CODE;
 
 pub struct PrepareModule {
@@ -53,8 +53,8 @@ impl Handler<Call> for PrepareModule {
         let bus_addr = self.bus_addr.clone().unwrap();
         let self_addr = ctx.address();
         let args = msg.args.clone();
-        let mod_priority_min= self.mod_priority_min;
-        let mod_priority_max= self.mod_priority_max;
+        let mod_priority_min = self.mod_priority_min;
+        let mod_priority_max = self.mod_priority_max;
         let mod_names: Vec<String> = self.prepare_map.keys().map(|k| k.clone()).collect();
         let mod_status = self.prepare_map.clone();
         let prepare_num_s = self.prepare_num_s;
@@ -75,8 +75,12 @@ impl Handler<Call> for PrepareModule {
                             Some(ModStatus::Ignore) => {
                                 self.prepare_num_s += 1;
 
-                                log::info!("string...  {}     {:?}", param.mod_name, ModStatus::InitalSuccess);
-                            },
+                                log::info!(
+                                    "string...  {}     {:?}",
+                                    param.mod_name,
+                                    ModStatus::InitalSuccess
+                                );
+                            }
                             Some(status) => log::warn!(
                                 "mod {} initial success, but expect from status {:?}",
                                 param.mod_name,
@@ -91,7 +95,7 @@ impl Handler<Call> for PrepareModule {
                     }
                     _ => {}
                 }
-                
+
                 Ok(Box::pin(async move { Ok(Value::Null) }))
             };
 
@@ -103,9 +107,14 @@ impl Handler<Call> for PrepareModule {
             },
             "initial_controler_start" => Box::pin(async move {
                 log::info!("initial_controler_start>>>>");
-                for priority in mod_priority_min..mod_priority_max+1 {
+                for priority in mod_priority_min..mod_priority_max + 1 {
                     for each_mod in &mod_names {
-                        call_mod_througth_bus!(bus_addr, each_mod, "mod_initial", json!(ModInitialParam{priority: priority}));
+                        call_mod_througth_bus!(
+                            bus_addr,
+                            each_mod,
+                            "mod_initial",
+                            json!(ModInitialParam { priority: priority })
+                        );
                     }
                 }
 
@@ -156,7 +165,10 @@ impl Handler<StartNotify> for PrepareModule {
     fn handle(&mut self, msg: StartNotify, ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr.clone());
 
-        ctx.notify(Call{method: "initial_controler_start".to_string(), args: Value::Null});
+        ctx.notify(Call {
+            method: "initial_controler_start".to_string(),
+            args: Value::Null,
+        });
     }
 }
 

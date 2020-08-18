@@ -14,7 +14,7 @@ use wallet_common::connect::{
     BindTransPortParam, CloseBindTransPortParam, CloseConnectRequest, ConnectRequest,
     RecvMsgPackage, SendMsgPackage,
 };
-use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 use wallet_common::secret::SecretEntity;
 
@@ -23,9 +23,6 @@ pub struct TXConnModule {
     bus_addr: Option<Addr<Bus>>,
 
     conn_mgr_addr: Option<Addr<conn_mgr::ConnMgr>>,
-
-    /// 启动优先级
-    priority: i32,
 }
 
 impl TXConnModule {
@@ -33,7 +30,6 @@ impl TXConnModule {
         Self {
             bus_addr: None,
             conn_mgr_addr: None,
-            priority: 0,
         }
     }
 }
@@ -49,20 +45,14 @@ impl Handler<Call> for TXConnModule {
     fn handle(&mut self, msg: Call, ctx: &mut Context<Self>) -> Self::Result {
         let conn_mgr_addr = self.conn_mgr_addr.clone().unwrap();
         let self_addr = ctx.address();
-        let mod_name = self.name();
         let bus_addr = self.bus_addr.clone().unwrap();
-        let priority = self.priority;
 
         Box::pin(async move {
             let method: &str = &msg.method;
             match method {
                 "mod_initial" => {
-                    let params: ModInitialParam =
+                    let _params: ModInitialParam =
                         async_parse_check!(msg.args, EwfError::CallParamValidFaild);
-
-                    if params.priority != priority {
-                        return Ok(json!(ModStatus::Ignore));
-                    }
 
                     for page_i in 1.. {
                         let data = call_mod_througth_bus!(
@@ -90,16 +80,6 @@ impl Handler<Call> for TXConnModule {
                             );
                         }
                     }
-
-                    call_mod_througth_bus!(
-                        bus_addr,
-                        "prepare",
-                        "mod_initial_return",
-                        json!(ModStatusPullParam {
-                            mod_name: mod_name,
-                            is_prepare: ModStatus::InitalSuccess,
-                        })
-                    );
 
                     Ok(json!(ModStatus::InitalSuccess))
                 }
@@ -199,7 +179,6 @@ impl Handler<StartNotify> for TXConnModule {
     type Result = ();
     fn handle(&mut self, msg: StartNotify, ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr.clone());
-        self.priority = msg.priority;
 
         self.conn_mgr_addr = Some(conn_mgr::ConnMgr::new(ctx.address()).start());
     }

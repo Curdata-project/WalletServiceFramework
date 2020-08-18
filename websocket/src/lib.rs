@@ -6,18 +6,15 @@ use std::fmt;
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{async_parse_check, call_mod_througth_bus};
+use ewf_core::{async_parse_check};
 use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
-use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use wallet_common::prepare::{ModInitialParam, ModStatus};
 
 use crate::server::WSServer;
 
 pub struct WebSocketModule {
     bind_transport: String,
     bus_addr: Option<Addr<Bus>>,
-
-    /// 启动优先级
-    priority: i32,
 }
 
 impl WebSocketModule {
@@ -25,7 +22,6 @@ impl WebSocketModule {
         Self {
             bind_transport,
             bus_addr: None,
-            priority: 0,
         }
     }
 }
@@ -40,27 +36,11 @@ impl Handler<Call> for WebSocketModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
     fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let bus_addr = self.bus_addr.clone().unwrap();
-        let mod_name = self.name();
-        let priority = self.priority;
 
         Box::pin(async move {
             if msg.method == "mod_initial" {
-                let params: ModInitialParam =
+                let _params: ModInitialParam =
                     async_parse_check!(msg.args, EwfError::CallParamValidFaild);
-
-                if params.priority != priority {
-                    return Ok(json!(ModStatus::Ignore));
-                }
-
-                call_mod_througth_bus!(
-                    bus_addr,
-                    "prepare",
-                    "mod_initial_return",
-                    json!(ModStatusPullParam {
-                        mod_name: mod_name,
-                        is_prepare: ModStatus::InitalSuccess,
-                    })
-                );
 
                 return Ok(json!(ModStatus::InitalSuccess));
             }
@@ -103,7 +83,6 @@ impl Handler<StartNotify> for WebSocketModule {
     type Result = ();
     fn handle(&mut self, msg: StartNotify, ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr);
-        self.priority = msg.priority;
 
         let bind_transport = self.bind_transport.clone();
         let self_addr = ctx.address();

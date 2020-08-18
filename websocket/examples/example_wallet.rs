@@ -25,19 +25,7 @@ fn start_sm_wallet() {
     let history = HistoryModule::new("test.db".to_string()).unwrap();
     let user = UserModule::new("test.db".to_string()).unwrap();
     let tx_conn = TXConnModule::new();
-    let prepare = PrepareModule::new(
-        1,
-        50,
-        vec![
-            "currencies",
-            "history",
-            "user",
-            "secret",
-            "tx_conn",
-            "transaction",
-            "webscoket_jsonrpc",
-        ],
-    );
+    let prepare = PrepareModule::new();
 
     // 启动顺序依赖
     //  secret依赖user，注册后用户信息填写

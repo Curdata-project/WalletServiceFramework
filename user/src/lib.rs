@@ -23,8 +23,8 @@ use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
 
-use ewf_core::{async_parse_check, call_mod_througth_bus};
-use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use ewf_core::{async_parse_check};
+use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 use wallet_common::user::UserEntity;
 
@@ -43,9 +43,6 @@ CREATE TABLE "user_store" (
 pub struct UserModule {
     pool: LocalPool,
     bus_addr: Option<Addr<Bus>>,
-
-    /// 启动优先级
-    priority: i32,
 }
 
 impl fmt::Debug for UserModule {
@@ -60,7 +57,6 @@ impl UserModule {
             pool: Pool::new(ConnectionManager::new(&path))
                 .map_err(|_| EwfError::ModuleInstanceError)?,
             bus_addr: None,
-            priority: 0,
         })
     }
 
@@ -206,9 +202,6 @@ impl Handler<Call> for UserModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
     fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let pool = self.pool.clone();
-        let mod_name = self.name();
-        let bus_addr = self.bus_addr.clone().unwrap();
-        let priority = self.priority;
 
         Box::pin(async move {
             let method: &str = &msg.method;
@@ -216,28 +209,14 @@ impl Handler<Call> for UserModule {
 
             let resp = match method {
                 "mod_initial" => {
-                    let params: ModInitialParam =
+                    let _params: ModInitialParam =
                         async_parse_check!(msg.args, EwfError::CallParamValidFaild);
-
-                    if params.priority != priority {
-                        return Ok(json!(ModStatus::Ignore));
-                    }
 
                     let initialed = if Self::exists_db(&db_conn) || Self::create(&db_conn).is_ok() {
                         ModStatus::InitalSuccess
                     } else {
                         ModStatus::InitalFailed
                     };
-
-                    call_mod_througth_bus!(
-                        bus_addr,
-                        "prepare",
-                        "mod_initial_return",
-                        json!(ModStatusPullParam {
-                            mod_name: mod_name,
-                            is_prepare: initialed.clone(),
-                        })
-                    );
 
                     json!(initialed)
                 }
@@ -286,7 +265,6 @@ impl Handler<StartNotify> for UserModule {
     type Result = ();
     fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr);
-        self.priority = msg.priority;
     }
 }
 

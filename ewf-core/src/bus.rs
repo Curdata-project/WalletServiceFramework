@@ -40,6 +40,12 @@ pub struct Bus {
     addr: Option<Addr<Self>>,
 }
 
+impl Bus {
+    fn crate_start_list(&self) -> Vec<(String, i32)> {
+        self.priorities.iter().map(|each| (each.1.clone(), each.0) ).collect()
+    }
+}
+
 impl Actor for Bus {
     type Context = Context<Self>;
 
@@ -52,7 +58,7 @@ impl Actor for Bus {
                 caller
                     .do_send(StartNotify {
                         addr: ctx.address(),
-                        priority: pp.0,
+                        start_list: self.crate_start_list(),
                     })
                     .unwrap();
             }

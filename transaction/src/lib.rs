@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::collections::hash_map::HashMap;
 use std::time::Duration;
 use wallet_common::connect::{CloseConnectRequest, ConnectRequest};
-use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::transaction::{TXCloseRequest, TXSendRequest, TXSendResponse};
 
 const CHECK_CLOSE_INTERVAL: u64 = 3;
@@ -93,9 +93,6 @@ pub struct TransactionModule {
     bus_addr: Option<Addr<Bus>>,
     tx_sm_datas: HashMap<u64, TransactionPayload>,
     tx_link: HashMap<String, u64>,
-
-    /// 启动优先级
-    priority: i32,
 }
 
 impl TransactionModule {
@@ -104,7 +101,6 @@ impl TransactionModule {
             bus_addr: None,
             tx_sm_datas: HashMap::<u64, TransactionPayload>::new(),
             tx_link: HashMap::<String, u64>::new(),
-            priority: 0,
         }
     }
 }
@@ -120,28 +116,12 @@ impl Handler<Call> for TransactionModule {
     fn handle(&mut self, msg: Call, ctx: &mut Context<Self>) -> Self::Result {
         let bus_addr = self.bus_addr.clone().unwrap();
         let self_addr = ctx.address();
-        let mod_name = self.name();
-        let priority = self.priority;
 
         let method: &str = &msg.method;
         match method {
             "mod_initial" => Box::pin(async move {
-                let params: ModInitialParam =
+                let _params: ModInitialParam =
                     async_parse_check!(msg.args, EwfError::CallParamValidFaild);
-
-                if params.priority != priority {
-                    return Ok(json!(ModStatus::Ignore));
-                }
-
-                call_mod_througth_bus!(
-                    bus_addr,
-                    "prepare",
-                    "mod_initial_return",
-                    json!(ModStatusPullParam {
-                        mod_name: mod_name,
-                        is_prepare: ModStatus::InitalSuccess,
-                    })
-                );
 
                 Ok(json!(ModStatus::InitalSuccess))
             }),
@@ -251,7 +231,6 @@ impl Handler<StartNotify> for TransactionModule {
     type Result = ();
     fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr);
-        self.priority = msg.priority;
 
         fn close_check_task(_self: &mut TransactionModule, ctx: &mut Context<TransactionModule>) {
             ctx.notify(Call {

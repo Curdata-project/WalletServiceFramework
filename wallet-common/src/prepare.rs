@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum ModStatus {
     UnInital,
     InitalSuccess,
@@ -14,6 +14,4 @@ pub struct ModStatusPullParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModInitialParam {
-    
-}
+pub struct ModInitialParam {}

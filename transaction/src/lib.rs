@@ -1,12 +1,28 @@
+mod error;
+mod transaction_msg;
+mod tx_algorithm;
+
+mod tx_payload_mgr;
+
 use std::fmt;
 
+use crate::error::Error;
+use crate::transaction_msg::{
+    CurrencyStat, TXMsgPackageData, TransactionContextAck, TransactionContextSyn,
+};
+use crate::tx_payload_mgr::{
+    MemFnTXPayloadGet, MemFnTXPayloadGetBySmid, MemFnTXPayloadMgrClose, MemFnTXPayloadMgrCreate,
+    MemFnTXPayloadMgrCreateResult, MemFnTXSetPaymentPlan, TXPayloadMgr, TransactionPayload,
+};
 use actix::prelude::*;
 use chrono::prelude::Local;
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::get_rng_core;
 use ewf_core::error::Error as EwfError;
 use ewf_core::states::TransactionMachine;
-use ewf_core::{async_parse_check, call_mod_througth_bus, call_self, sync_parse_check};
+use ewf_core::{
+    async_parse_check, async_parse_check_withlog, call_mod_througth_bus, call_self, transition,
+};
 use ewf_core::{Bus, Call, CreateMachine, Event, Module, StartNotify};
 use hex::ToHex;
 use rand::RngCore;
@@ -14,93 +30,36 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::HashMap;
 use std::time::Duration;
-use wallet_common::connect::{CloseConnectRequest, ConnectRequest};
-use wallet_common::prepare::{ModInitialParam, ModStatus};
-use wallet_common::transaction::{TXCloseRequest, TXSendRequest, TXSendResponse};
+use wallet_common::connect::{
+    CloseConnectRequest, ConnectRequest, MsgPackage, OnConnectNotify, RecvMsgPackage,
+    SendMsgPackage,
+};
+use wallet_common::currencies::CurrencyStatisticsItem;
+use wallet_common::prepare::{ModInitialParam, ModStatus, ModStatusPullParam};
+use wallet_common::transaction::{
+    TXCloseRequest, TXSendRequest, TXSendResponse, TransactionExchangerItem,
+};
 
-const CHECK_CLOSE_INTERVAL: u64 = 3;
-const MAX_CLOSE_TIME_MS: i64 = 2000;
+/// 交易时钟最大允许偏差 ms
+const MAX_TRANSACTION_CLOCK_SKEW_MS: i64 = 30000;
 
-/// 仅用作模块内互调参数转换错误之类的异常，确保是由编码错误触发
-const BUG_ERROR_PANIC: &str = "found a bug";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TXSendSaveInput {
-    pub tx_sm_id: u64,
-}
-
-impl From<Value> for TXSendSaveInput {
-    fn from(input: Value) -> Self {
-        serde_json::from_value(input).expect(BUG_ERROR_PANIC)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TXSendSaveOutput {
-    pub txid: String,
-}
-
-impl From<Value> for TXSendSaveOutput {
-    fn from(input: Value) -> Self {
-        serde_json::from_value(input).expect(BUG_ERROR_PANIC)
-    }
-}
-
-pub struct TransactionPayload {
-    pub uid: String,
-    pub is_payer: bool,
-    pub amount: u64,
-    pub oppo_uid: String,
-    pub pay_plan: Vec<(u64, u64)>,
-    pub recv_plan: Vec<(u64, u64)>,
-    pub pay_list: Vec<DigitalCurrencyWrapper>,
-
-    // 使用txid与conn管理交互
-    pub txid: String,
-
-    pub tx_sm_id: u64,
-    pub last_update_time: i64,
-}
-
-impl TransactionPayload {
-    fn new(tx_sm_id: u64, txid: String) -> Self {
-        Self {
-            uid: "".to_string(),
-            is_payer: false,
-            amount: 0,
-            oppo_uid: "".to_string(),
-            pay_plan: Vec::<(u64, u64)>::new(),
-            recv_plan: Vec::<(u64, u64)>::new(),
-            pay_list: Vec::<DigitalCurrencyWrapper>::new(),
-            txid,
-            tx_sm_id,
-            last_update_time: Local::now().timestamp_millis(),
-        }
-    }
-
-    fn gen_txid() -> String {
-        let ret = Local::now().timestamp().to_string();
-
-        // TODO 或许要考虑流程取出碰撞
-        let mut arr = Vec::<u8>::new();
-        arr.resize(8, 0);
-        get_rng_core().fill_bytes(&mut arr[0..8]);
-        ret + &arr.encode_hex::<String>()
-    }
+#[derive(Debug, Message, Clone, Serialize, Deserialize)]
+#[rtype(result = "Result<(), EwfError>")]
+struct RecvMsgPackageByTxConn {
+    msg: MsgPackage,
+    recv_uid: String,
 }
 
 pub struct TransactionModule {
     bus_addr: Option<Addr<Bus>>,
-    tx_sm_datas: HashMap<u64, TransactionPayload>,
-    tx_link: HashMap<String, u64>,
+    tx_payload_addr: Option<Addr<TXPayloadMgr>>,
 }
 
 impl TransactionModule {
     pub fn new() -> Self {
         Self {
             bus_addr: None,
-            tx_sm_datas: HashMap::<u64, TransactionPayload>::new(),
-            tx_link: HashMap::<String, u64>::new(),
+            tx_payload_addr: None,
         }
     }
 }
@@ -114,116 +73,222 @@ impl Actor for TransactionModule {
 impl Handler<Call> for TransactionModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
     fn handle(&mut self, msg: Call, ctx: &mut Context<Self>) -> Self::Result {
-        let bus_addr = self.bus_addr.clone().unwrap();
         let self_addr = ctx.address();
+        let bus_addr = self.bus_addr.clone().unwrap();
+        let tx_payload_addr = self.tx_payload_addr.clone().unwrap();
 
-        let method: &str = &msg.method;
-        match method {
-            "mod_initial" => Box::pin(async move {
-                let _params: ModInitialParam =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+        Box::pin(async move {
+            let method: &str = &msg.method;
+            match method {
+                "mod_initial" => {
+                    let params: ModInitialParam =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                Ok(json!(ModStatus::InitalSuccess))
-            }),
-            "tx_send" => Box::pin(async move {
-                let params: TXSendRequest =
-                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
-
-                // 创建状态机
-                let tx_sm_id = bus_addr
-                    .send(CreateMachine {
-                        machine: Box::new(TransactionMachine::default()),
-                    })
-                    .await?;
-
-                let save_ans: TXSendSaveOutput =
-                    call_self!(self_addr, "tx_save_cb", json!(TXSendSaveInput { tx_sm_id })).into();
-
-                // 建立链接，若此处连接失败，创建的状态机等随超时回收
-                call_mod_througth_bus!(
-                    bus_addr,
-                    "tx_conn",
-                    "connect",
-                    json!(ConnectRequest {
-                        uid: params.uid,
-                        oppo_peer_uid: params.oppo_peer_uid,
-                        txid: save_ans.txid.clone(),
-                    })
-                );
-                log::info!("tx_connect {}", save_ans.txid.clone());
-
-                Ok(json!(TXSendResponse {
-                    txid: save_ans.txid,
-                }))
-            }),
-            "tx_save_cb" => {
-                let params: TXSendSaveInput =
-                    sync_parse_check!(msg.args, EwfError::CallParamValidFaild);
-                let new_tx_id = TransactionPayload::gen_txid();
-                self.tx_sm_datas.insert(
-                    params.tx_sm_id,
-                    TransactionPayload::new(params.tx_sm_id, new_tx_id.clone()),
-                );
-                self.tx_link.insert(new_tx_id.clone(), params.tx_sm_id);
-
-                Box::pin(async move { Ok(json!(TXSendSaveOutput { txid: new_tx_id })) })
-            }
-            "run_close_check_task" => {
-                for tx_sm_id in self.tx_link.values() {
-                    let pay_load = match self.tx_sm_datas.get(&tx_sm_id) {
-                        Some(pay_load) => pay_load,
-                        None => continue,
-                    };
-
-                    let now = Local::now().timestamp_millis();
-
-                    // 关闭死链接
-                    if now - pay_load.last_update_time > MAX_CLOSE_TIME_MS {
-                        ctx.notify(Call {
-                            method: "tx_close".to_string(),
-                            args: json!(TXCloseRequest {
-                                txid: pay_load.txid.clone()
-                            }),
-                        });
-                    }
+                    Ok(json!(ModStatus::InitalSuccess))
                 }
+                "on_connect" => {
+                    let params: OnConnectNotify =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                Box::pin(async move { Ok(Value::Null) })
-            }
-            "tx_close" => {
-                let params: TXCloseRequest =
-                    sync_parse_check!(msg.args, EwfError::CallParamValidFaild);
-                if let Some(tx_sm_id) = self.tx_link.get_mut(&params.txid) {
-                    self.tx_sm_datas.remove(&tx_sm_id);
+                    // 创建状态机
+                    let tx_sm_id = bus_addr
+                        .send(CreateMachine {
+                            machine: Box::new(TransactionMachine::default()),
+                        })
+                        .await?;
+
+                    let save_ans: MemFnTXPayloadMgrCreateResult = tx_payload_addr
+                        .send(MemFnTXPayloadMgrCreate {
+                            uid: params.uid.clone(),
+                            tx_sm_id,
+                            is_tx_sender: false,
+                            txid: Some(params.txid),
+                        })
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
+
+                    log::info!("tx_on_connect {} at {}", save_ans.txid.clone(), params.uid);
+
+                    transition!(bus_addr, tx_sm_id, "Starting");
+
+                    Ok(json!(TXSendResponse {
+                        txid: save_ans.txid,
+                    }))
                 }
-                self.tx_link.remove(&params.txid);
+                "tx_send" => {
+                    let params: TXSendRequest =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                Box::pin(async move {
-                    log::info!("tx_close {}", params.txid);
+                    // 创建状态机
+                    let tx_sm_id = bus_addr
+                        .send(CreateMachine {
+                            machine: Box::new(TransactionMachine::default()),
+                        })
+                        .await?;
 
+                    let save_ans: MemFnTXPayloadMgrCreateResult = tx_payload_addr
+                        .send(MemFnTXPayloadMgrCreate {
+                            uid: params.uid.clone(),
+                            tx_sm_id,
+                            is_tx_sender: true,
+                            txid: None,
+                        })
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
+
+                    tx_payload_addr
+                        .send(MemFnTXSetPaymentPlan {
+                            txid: save_ans.txid.clone(),
+                            uid: params.uid.clone(),
+                            exchangers: params.exchangers,
+                        })
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
+
+                    // 建立链接，若此处连接失败，创建的状态机等随超时回收
                     call_mod_througth_bus!(
                         bus_addr,
                         "tx_conn",
                         "connect",
+                        json!(ConnectRequest {
+                            uid: params.uid.clone(),
+                            oppo_peer_uid: params.oppo_peer_uid,
+                            txid: save_ans.txid.clone(),
+                        })
+                    );
+                    log::info!("tx_connect {} at {}", save_ans.txid.clone(), params.uid);
+
+                    transition!(bus_addr, tx_sm_id, "Starting");
+
+                    Ok(json!(TXSendResponse {
+                        txid: save_ans.txid,
+                    }))
+                }
+                "recv_tx_msg" => {
+                    let params: RecvMsgPackage =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                    let uid = params.recv_uid.clone();
+                    let txid = params.msg.txid.clone();
+
+                    match self_addr
+                        .send(RecvMsgPackageByTxConn {
+                            msg: params.msg,
+                            recv_uid: params.recv_uid,
+                        })
+                        .await
+                    {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(err)) => {
+                            call_self!(
+                                self_addr,
+                                "tx_close",
+                                json!(TXCloseRequest {
+                                    txid,
+                                    uid,
+                                    reason: format!("{:?}", err)
+                                })
+                            );
+                        }
+                        Err(err) => {
+                            call_self!(
+                                self_addr,
+                                "tx_close",
+                                json!(TXCloseRequest {
+                                    txid,
+                                    uid,
+                                    reason: format!("{:?}", err)
+                                })
+                            );
+                        }
+                    }
+
+                    Ok(Value::Null)
+                }
+                "tx_close" => {
+                    let params: TXCloseRequest =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                    tx_payload_addr
+                        .send(MemFnTXPayloadMgrClose {
+                            txid: params.txid.clone(),
+                            uid: params.uid.clone(),
+                        })
+                        .await?;
+
+                    log::info!(
+                        "tx_close {} at {}, reason: {}",
+                        params.txid,
+                        params.uid,
+                        params.reason
+                    );
+
+                    call_mod_througth_bus!(
+                        bus_addr,
+                        "tx_conn",
+                        "close_conn",
                         json!(CloseConnectRequest { txid: params.txid })
                     );
 
                     Ok(Value::Null)
-                })
+                }
+                _ => Ok(Value::Null),
             }
-            _ => Box::pin(async move { Ok(Value::Null) }),
-        }
+        })
     }
 }
 
 impl Handler<Event> for TransactionModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
-        let event: &str = &msg.event;
-        match event {
-            // no care this event, ignore
-            _ => Box::pin(async move { Ok(()) }),
-        }
+        let bus_addr = self.bus_addr.clone().unwrap();
+        let tx_payload_addr = self.tx_payload_addr.clone().unwrap();
+
+        Box::pin(async move {
+            let event: &str = &msg.event;
+            let tx_sm_id = msg.id;
+
+            let payload: TransactionPayload = tx_payload_addr
+                .send(MemFnTXPayloadGetBySmid {
+                    tx_sm_id: tx_sm_id.clone(),
+                })
+                .await?
+                .map_err(|err| err.to_ewf_error())?;
+
+            match event {
+                "Start" => {
+                    // Start状态时，exchangers不为空的为交易发起方
+                    if payload.exchangers.len() != 0usize {
+                        send_transaction_context_syn(tx_payload_addr, bus_addr.clone(), payload)
+                            .await?;
+
+                        return Ok(transition!(bus_addr, tx_sm_id, "PaymentPlanSyn"));
+                    }
+                    Ok(())
+                }
+                "PaymentPlanRecv" => {
+                    send_paymentplanack(tx_payload_addr, bus_addr.clone(), payload).await?;
+
+                    Ok(transition!(bus_addr, tx_sm_id, "PaymentPlanAck"))
+                }
+                "PaymentPlanSend" => Ok(()),
+                "PaymentPlanDone" => {
+                    if payload.is_payer {
+                        send_currency_stat(tx_payload_addr, bus_addr.clone(), payload).await?;
+
+                        Ok(transition!(
+                            bus_addr,
+                            tx_sm_id,
+                            "IsPayerAndSendCurrencyStat"
+                        ))
+                    } else {
+                        Ok(transition!(bus_addr, tx_sm_id, "IsReceiver"))
+                    }
+                }
+                // no care this event, ignore
+                _ => Ok(()),
+            }
+        })
     }
 }
 
@@ -232,15 +297,58 @@ impl Handler<StartNotify> for TransactionModule {
     fn handle(&mut self, msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
         self.bus_addr = Some(msg.addr);
 
-        fn close_check_task(_self: &mut TransactionModule, ctx: &mut Context<TransactionModule>) {
-            ctx.notify(Call {
-                method: "run_close_check_task".to_string(),
-                args: Value::Null,
-            });
-        }
+        self.tx_payload_addr = Some(TXPayloadMgr::new(_ctx.address()).start());
+    }
+}
 
-        // 启动定时器关闭死链接
-        _ctx.run_interval(Duration::new(CHECK_CLOSE_INTERVAL, 0), close_check_task);
+impl Handler<RecvMsgPackageByTxConn> for TransactionModule {
+    type Result = ResponseFuture<Result<(), EwfError>>;
+    fn handle(&mut self, params: RecvMsgPackageByTxConn, _ctx: &mut Context<Self>) -> Self::Result {
+        let bus_addr = self.bus_addr.clone().unwrap();
+        let tx_payload_addr = self.tx_payload_addr.clone().unwrap();
+
+        Box::pin(async move {
+            let tx_msgtype: &str = &transaction_msg::get_msgtype(&params.msg.data);
+
+            let payload = tx_payload_addr
+                .send(MemFnTXPayloadGet {
+                    txid: params.msg.txid.clone(),
+                    uid: params.recv_uid.clone(),
+                })
+                .await?
+                .map_err(|err| err.to_ewf_error())?;
+
+            let tx_sm_id = payload.tx_sm_id.clone();
+
+            match tx_msgtype {
+                "TransactionContextSyn" => {
+                    recv_paymentplansyn(
+                        tx_payload_addr,
+                        bus_addr.clone(),
+                        params.msg.data,
+                        payload,
+                    )
+                    .await?;
+
+                    Ok(transition!(bus_addr, tx_sm_id, "RecvPaymentPlanSyn"))
+                }
+                "TransactionContextAck" => {
+                    recv_paymentplanack(
+                        tx_payload_addr,
+                        bus_addr.clone(),
+                        params.msg.data,
+                        payload,
+                    )
+                    .await?;
+
+                    Ok(transition!(bus_addr, tx_sm_id, "RecvPaymentPlanAck"))
+                }
+                _ => {
+                    log::warn!("recv unexpect tx msg <{}>", tx_msgtype,);
+                    Err(Error::TXSequenceNotExpect.to_ewf_error())
+                }
+            }
+        })
     }
 }
 
@@ -259,3 +367,122 @@ impl Module for TransactionModule {
         "0.1".to_string()
     }
 }
+
+async fn send_transaction_context_syn(
+    tx_payload_addr: Addr<TXPayloadMgr>,
+    bus_addr: Addr<Bus>,
+    payload: TransactionPayload,
+) -> Result<(), EwfError> {
+    let transaction_context_syn = TransactionContextSyn {
+        timestamp: Local::now().timestamp_millis(),
+        exchangers: payload.exchangers,
+    };
+    call_mod_througth_bus!(
+        bus_addr,
+        "tx_conn",
+        "send_tx_msg",
+        json!(SendMsgPackage {
+            send_uid: payload.uid.clone(),
+            msg: MsgPackage {
+                txid: payload.txid,
+                data: transaction_context_syn.to_msgpack()
+            }
+        })
+    );
+
+    Ok(())
+}
+
+async fn recv_paymentplansyn(
+    tx_payload_addr: Addr<TXPayloadMgr>,
+    bus_addr: Addr<Bus>,
+    msg_data: Value,
+    payload: TransactionPayload,
+) -> Result<(), EwfError> {
+    let recv = TransactionContextSyn::from_msgpack(msg_data).map_err(|err| err.to_ewf_error())?;
+
+    let now = Local::now().timestamp_millis();
+    if now - recv.timestamp > MAX_TRANSACTION_CLOCK_SKEW_MS {
+        return Err(Error::TXCLOCKSKEWTOOLARGE.to_ewf_error());
+    }
+
+    tx_payload_addr
+        .send(MemFnTXSetPaymentPlan {
+            txid: payload.txid.clone(),
+            uid: payload.uid.clone(),
+            exchangers: recv.exchangers,
+        })
+        .await?
+        .map_err(|err| err.to_ewf_error())?;
+    Ok(())
+}
+
+async fn send_paymentplanack(
+    tx_payload_addr: Addr<TXPayloadMgr>,
+    bus_addr: Addr<Bus>,
+    payload: TransactionPayload,
+) -> Result<(), EwfError> {
+    let transaction_context_ack = TransactionContextAck {};
+
+    call_mod_througth_bus!(
+        bus_addr,
+        "tx_conn",
+        "send_tx_msg",
+        json!(SendMsgPackage {
+            msg: MsgPackage {
+                txid: payload.txid,
+                data: transaction_context_ack.to_msgpack(),
+            },
+            send_uid: payload.uid,
+        })
+    );
+
+    Ok(())
+}
+
+async fn recv_paymentplanack(
+    tx_payload_addr: Addr<TXPayloadMgr>,
+    bus_addr: Addr<Bus>,
+    msg_data: Value,
+    payload: TransactionPayload,
+) -> Result<(), EwfError> {
+    Ok(())
+}
+
+async fn send_currency_stat(
+    tx_payload_addr: Addr<TXPayloadMgr>,
+    bus_addr: Addr<Bus>,
+    payload: TransactionPayload,
+) -> Result<(), EwfError> {
+    let statistics:Vec<CurrencyStatisticsItem> = async_parse_check_withlog!(call_mod_througth_bus!(
+        bus_addr,
+        "currencies",
+        "query_currency_statistics",
+        json!(payload.uid)
+    ), Error::TXExpectError.to_ewf_error(), log::error!("parse func currencies.query_currency_statistics return value error when deal tx_msg TransactionContextSyn"));
+
+    let currency_stat = CurrencyStat {
+        statistics: tx_algorithm::get_currenics_for_change(statistics),
+    };
+
+    call_mod_througth_bus!(
+        bus_addr,
+        "tx_conn",
+        "send_tx_msg",
+        json!(SendMsgPackage {
+            msg: MsgPackage {
+                txid: payload.txid,
+                data: currency_stat.to_msgpack(),
+            },
+            send_uid: payload.uid,
+        })
+    );
+
+    Ok(())
+}
+
+// async fn recv_paymentplanack_when_paymentplan_done(tx_payload_addr: Addr<TXPayloadMgr>, bus_addr: Addr<Bus>, msg_data: Value, payload: TransactionPayload) -> Result<(), EwfError> {
+//     transition!(bus_addr, payload.tx_sm_id, "RecvPaymentPlanAck");
+
+//     Ok(())
+// }

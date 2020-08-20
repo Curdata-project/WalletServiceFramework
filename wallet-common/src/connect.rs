@@ -20,6 +20,13 @@ pub struct ConnectRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnConnectNotify {
+    pub uid: String,
+    pub oppo_peer_uid: String,
+    pub txid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloseConnectRequest {
     pub txid: String,
 }

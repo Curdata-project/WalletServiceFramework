@@ -12,7 +12,7 @@ use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::json;
 use wallet_common::connect::{
     BindTransPortParam, CloseBindTransPortParam, CloseConnectRequest, ConnectRequest,
-    RecvMsgPackage, SendMsgPackage,
+    OnConnectNotify, RecvMsgPackage, SendMsgPackage,
 };
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
@@ -153,6 +153,14 @@ impl Handler<Call> for TXConnModule {
                         params.msg.txid,
                         params.msg.data
                     );
+                    call_mod_througth_bus!(bus_addr, "transaction", "recv_tx_msg", json!(params));
+
+                    Ok(Value::Null)
+                }
+                "on_connect" => {
+                    let params: OnConnectNotify =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+                    call_mod_througth_bus!(bus_addr, "transaction", "on_connect", json!(params));
 
                     Ok(Value::Null)
                 }

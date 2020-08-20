@@ -8,7 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::hash_map::HashMap;
-use wallet_common::connect::{MsgPackage, RecvMsgPackage};
+use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage};
 
 #[derive(Debug)]
 struct ListenObj {
@@ -227,7 +227,23 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
 impl Handler<MemFnConnectParam> for ConnMgr {
     type Result = Result<(), Error>;
     fn handle(&mut self, param: MemFnConnectParam, _ctx: &mut Context<Self>) -> Self::Result {
-        self.connect(param.self_uid, param.peer_uid, param.txid)
+        let ret = self.connect(
+            param.self_uid.clone(),
+            param.peer_uid.clone(),
+            param.txid.clone(),
+        );
+
+        // TODO txid冲突解决
+        self.conn_addr.do_send(Call {
+            method: "on_connect".to_string(),
+            args: json!(OnConnectNotify {
+                uid: param.peer_uid,
+                oppo_peer_uid: param.self_uid,
+                txid: param.txid,
+            }),
+        });
+
+        ret
     }
 }
 

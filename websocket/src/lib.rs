@@ -6,8 +6,9 @@ use std::fmt;
 
 use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
+use ewf_core::{async_parse_check};
 use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
-use wallet_common::prepare::{ModStatusPullParam, ModStatus};
+use wallet_common::prepare::{ModInitialParam, ModStatus};
 
 use crate::server::WSServer;
 
@@ -33,10 +34,17 @@ impl Actor for WebSocketModule {
 
 impl Handler<Call> for WebSocketModule {
     type Result = ResponseFuture<Result<Value, EwfError>>;
-    fn handle(&mut self, _msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Call, _ctx: &mut Context<Self>) -> Self::Result {
         let bus_addr = self.bus_addr.clone().unwrap();
+
         Box::pin(async move {
-            let mut split_iter = _msg.method.split(|c| c == '.');
+            if msg.method == "mod_initial" {
+                let _params: ModInitialParam =
+                    async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                return Ok(json!(ModStatus::InitalSuccess));
+            }
+            let mut split_iter = msg.method.split(|c| c == '.');
             let mod_name = match split_iter.next() {
                 Some(mod_name) => mod_name.to_string(),
                 None => return Err(EwfError::MethodNotFoundError),
@@ -51,7 +59,7 @@ impl Handler<Call> for WebSocketModule {
             module
                 .send(Call {
                     method: method,
-                    args: _msg.args,
+                    args: msg.args,
                 })
                 .await?
         })
@@ -61,47 +69,32 @@ impl Handler<Call> for WebSocketModule {
 impl Handler<Event> for WebSocketModule {
     type Result = ResponseFuture<Result<(), EwfError>>;
     fn handle(&mut self, _msg: Event, _ctx: &mut Context<Self>) -> Self::Result {
-        let bind_transport = self.bind_transport.clone();
-        let bus_addr = self.bus_addr.clone().unwrap();
-        let mod_name = self.name();
-        let self_addr = _ctx.address();
-
         Box::pin(async move {
             let event: &str = &_msg.event;
             match event {
-                "Start" => {
-                    actix::spawn(async move {
-                        match WSServer::bind(bind_transport).await {
-                            Ok(ws_server) => ws_server.listen_loop(self_addr).await,
-                            Err(err) => panic!("ws_server bind error, {:?}", err),
-                        }
-                    });
-
-                    let prepare = bus_addr
-                        .send(CallQuery {
-                            module: "prepare".to_string(),
-                        })
-                        .await??;
-                    prepare
-                        .send(Call {
-                            method: "inital".to_string(),
-                            args: json!(ModStatusPullParam { mod_name, is_prepare: ModStatus::InitalSuccess }),
-                        })
-                        .await??;
-                }
                 // no care this event, ignore
                 _ => return Ok(()),
             }
-
-            Ok(())
         })
     }
 }
 
 impl Handler<StartNotify> for WebSocketModule {
     type Result = ();
-    fn handle(&mut self, _msg: StartNotify, _ctx: &mut Context<Self>) -> Self::Result {
-        self.bus_addr = Some(_msg.addr);
+    fn handle(&mut self, msg: StartNotify, ctx: &mut Context<Self>) -> Self::Result {
+        self.bus_addr = Some(msg.addr);
+
+        let bind_transport = self.bind_transport.clone();
+        let self_addr = ctx.address();
+
+        let server = actix::fut::wrap_future::<_, Self>(async move {
+            match WSServer::bind(bind_transport).await {
+                Ok(ws_server) => ws_server.listen_loop(self_addr).await,
+                Err(err) => panic!("ws_server bind error, {:?}", err),
+            }
+        });
+
+        ctx.spawn(server);
     }
 }
 

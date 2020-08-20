@@ -18,7 +18,6 @@ impl CurrencyStatus {
 }
 
 impl From<i16> for CurrencyStatus {
-
     fn from(status: i16) -> Self {
         match status {
             0 => CurrencyStatus::Avail,

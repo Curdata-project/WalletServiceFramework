@@ -1,6 +1,8 @@
 use crate::error::Error;
 use crate::machines::{Machine, MachineManager};
-use crate::message::{Call, CallQuery, Event, StartNotify, Transition};
+use crate::message::{
+    Call, CallQuery, CreateMachine, DestoryMachine, Event, StartNotify, Transition,
+};
 use crate::Module;
 use actix::prelude::*;
 use std::cmp::Ordering;
@@ -38,6 +40,12 @@ pub struct Bus {
     addr: Option<Addr<Self>>,
 }
 
+impl Bus {
+    fn crate_start_list(&self) -> Vec<(String, i32)> {
+        self.priorities.iter().map(|each| (each.1.clone(), each.0) ).collect()
+    }
+}
+
 impl Actor for Bus {
     type Context = Context<Self>;
 
@@ -45,11 +53,15 @@ impl Actor for Bus {
         self.priorities.sort();
         self.addr = Some(ctx.address());
 
-        for v in self.start_caller.values() {
-            v.do_send(StartNotify {
-                addr: ctx.address(),
-            })
-            .unwrap();
+        for pp in self.priorities.iter() {
+            if let Some(caller) = self.start_caller.get(&pp.1) {
+                caller
+                    .do_send(StartNotify {
+                        addr: ctx.address(),
+                        start_list: self.crate_start_list(),
+                    })
+                    .unwrap();
+            }
         }
     }
 }
@@ -132,5 +144,19 @@ impl Handler<CallQuery> for Bus {
         } else {
             Err(Error::NoModule)
         }
+    }
+}
+
+impl Handler<CreateMachine> for Bus {
+    type Result = u64;
+    fn handle(&mut self, msg: CreateMachine, _ctx: &mut Context<Self>) -> Self::Result {
+        self.machines.insert(msg.machine)
+    }
+}
+
+impl Handler<DestoryMachine> for Bus {
+    type Result = ();
+    fn handle(&mut self, msg: DestoryMachine, _ctx: &mut Context<Self>) -> Self::Result {
+        self.machines.delete(msg.machine_id)
     }
 }

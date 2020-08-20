@@ -13,6 +13,7 @@ pub enum CertificateEntity {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretEntity {
+    pub uid: String,
     pub secret_type: String,
     pub keypair: KeyPairEntity,
     pub cert: CertificateEntity,

@@ -10,7 +10,6 @@ pub enum Error {
     DatabaseSelectError,
     DatabaseInsertError,
     DatabaseDeleteError,
-
 }
 
 impl Error {

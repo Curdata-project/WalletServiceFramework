@@ -23,7 +23,7 @@ use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
 
-use ewf_core::{async_parse_check};
+use ewf_core::async_parse_check;
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 use wallet_common::user::UserEntity;

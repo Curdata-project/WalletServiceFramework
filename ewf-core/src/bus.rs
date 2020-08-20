@@ -42,7 +42,10 @@ pub struct Bus {
 
 impl Bus {
     fn crate_start_list(&self) -> Vec<(String, i32)> {
-        self.priorities.iter().map(|each| (each.1.clone(), each.0) ).collect()
+        self.priorities
+            .iter()
+            .map(|each| (each.1.clone(), each.0))
+            .collect()
     }
 }
 

@@ -9,12 +9,11 @@ enum TransactionState {
     PaymentPlanDone,
     WaitCurrencyStat,
     ComputePlan,
-    ExchangeCurrency,
+    ExchangeCurrencyAtReceiver,
     SendCurrencyPlan,
-    SendExchangeCurrency,
+    ExchangeCurrencyAtPayer,
     SendCurrencyStat,
     CurrencyPlanDone,
-    SenderExchangeCurrency,
     HalfTransaction,
     EndTransaction,
 }
@@ -25,8 +24,18 @@ enum TransactionTransition {
     PaymentPlanAck,
     RecvPaymentPlanSyn,
     RecvPaymentPlanAck,
-    IsPayerAndSendCurrencyStat,
     IsReceiver,
+    RecvCurrencyStat,
+    RecvComputePlanNotNeedExchange,
+    RecvComputePlanNeedExchange,
+    ExChangeCurrencyDoneAtReceiver,
+    SendCurrencyPlanData,
+    IsPayerAndSendCurrencyStat,
+    RecvCurrencyPlanNotNeedExchange,
+    RecvCurrencyPlanNeedExchange,
+    ExChangeCurrencyDoneAtPayer,
+    SendTransactionSync,
+    SendAndRecvTransactionConfirm,
 }
 
 impl From<String> for TransactionTransition {
@@ -38,8 +47,24 @@ impl From<String> for TransactionTransition {
             "PaymentPlanAck" => TransactionTransition::PaymentPlanAck,
             "RecvPaymentPlanSyn" => TransactionTransition::RecvPaymentPlanSyn,
             "RecvPaymentPlanAck" => TransactionTransition::RecvPaymentPlanAck,
-            "IsPayerAndSendCurrencyStat" => TransactionTransition::IsPayerAndSendCurrencyStat,
             "IsReceiver" => TransactionTransition::IsReceiver,
+            "RecvCurrencyStat" => TransactionTransition::RecvCurrencyStat,
+            "RecvComputePlanNotNeedExchange" => {
+                TransactionTransition::RecvComputePlanNotNeedExchange
+            }
+            "RecvComputePlanNeedExchange" => TransactionTransition::RecvComputePlanNeedExchange,
+            "ExChangeCurrencyDoneAtReceiver" => {
+                TransactionTransition::ExChangeCurrencyDoneAtReceiver
+            }
+            "SendCurrencyPlanData" => TransactionTransition::SendCurrencyPlanData,
+            "IsPayerAndSendCurrencyStat" => TransactionTransition::IsPayerAndSendCurrencyStat,
+            "RecvCurrencyPlanNotNeedExchange" => {
+                TransactionTransition::RecvCurrencyPlanNotNeedExchange
+            }
+            "RecvCurrencyPlanNeedExchange" => TransactionTransition::RecvCurrencyPlanNeedExchange,
+            "ExChangeCurrencyDoneAtPayer" => TransactionTransition::ExChangeCurrencyDoneAtPayer,
+            "SendTransactionSync" => TransactionTransition::SendTransactionSync,
+            "SendAndRecvTransactionConfirm" => TransactionTransition::SendAndRecvTransactionConfirm,
             _ => TransactionTransition::PaymentPlanSyn,
         }
     }
@@ -71,12 +96,13 @@ impl Machine for TransactionMachine {
             TransactionState::PaymentPlanDone => "PaymentPlanDone".to_string(),
             TransactionState::WaitCurrencyStat => "WaitCurrencyStat".to_string(),
             TransactionState::ComputePlan => "ComputePlan".to_string(),
-            TransactionState::ExchangeCurrency => "ExchangeCurrency".to_string(),
+            TransactionState::ExchangeCurrencyAtReceiver => {
+                "ExchangeCurrencyAtReceiver".to_string()
+            }
             TransactionState::SendCurrencyPlan => "SendCurrencyPlan".to_string(),
-            TransactionState::SendExchangeCurrency => "SendExchangeCurrency".to_string(),
+            TransactionState::ExchangeCurrencyAtPayer => "ExchangeCurrencyAtPayer".to_string(),
             TransactionState::SendCurrencyStat => "SendCurrencyStat".to_string(),
             TransactionState::CurrencyPlanDone => "CurrencyPlanDone".to_string(),
-            TransactionState::SenderExchangeCurrency => "SenderExchangeCurrency".to_string(),
             TransactionState::HalfTransaction => "HalfTransaction".to_string(),
             TransactionState::EndTransaction => "EndTransaction".to_string(),
         }
@@ -109,11 +135,78 @@ impl Machine for TransactionMachine {
                 TransactionState::PaymentPlanDone,
                 TransactionTransition::IsPayerAndSendCurrencyStat,
             ) => {
+                self.state = TransactionState::SendCurrencyStat;
+                Ok(self.to_string())
+            }
+            // 收款方
+            (TransactionState::PaymentPlanDone, TransactionTransition::IsReceiver) => {
+                self.state = TransactionState::WaitCurrencyStat;
+                Ok(self.to_string())
+            }
+            (TransactionState::WaitCurrencyStat, TransactionTransition::RecvCurrencyStat) => {
+                self.state = TransactionState::ComputePlan;
+                Ok(self.to_string())
+            }
+            (
+                TransactionState::ComputePlan,
+                TransactionTransition::RecvComputePlanNotNeedExchange,
+            ) => {
                 self.state = TransactionState::SendCurrencyPlan;
                 Ok(self.to_string())
             }
-            (TransactionState::PaymentPlanDone, TransactionTransition::IsReceiver) => {
-                self.state = TransactionState::WaitCurrencyStat;
+            (TransactionState::ComputePlan, TransactionTransition::RecvComputePlanNeedExchange) => {
+                self.state = TransactionState::ExchangeCurrencyAtReceiver;
+                Ok(self.to_string())
+            }
+            (
+                TransactionState::ExchangeCurrencyAtReceiver,
+                TransactionTransition::ExChangeCurrencyDoneAtReceiver,
+            ) => {
+                self.state = TransactionState::SendCurrencyPlan;
+                Ok(self.to_string())
+            }
+            (TransactionState::SendCurrencyPlan, TransactionTransition::SendCurrencyPlanData) => {
+                self.state = TransactionState::CurrencyPlanDone;
+                Ok(self.to_string())
+            }
+            // 付款方
+            (
+                TransactionState::PaymentPlanDone,
+                TransactionTransition::IsPayerAndSendCurrencyStat,
+            ) => {
+                self.state = TransactionState::SendCurrencyStat;
+                Ok(self.to_string())
+            }
+            (
+                TransactionState::SendCurrencyStat,
+                TransactionTransition::RecvCurrencyPlanNeedExchange,
+            ) => {
+                self.state = TransactionState::ExchangeCurrencyAtPayer;
+                Ok(self.to_string())
+            }
+            (
+                TransactionState::SendCurrencyStat,
+                TransactionTransition::RecvCurrencyPlanNotNeedExchange,
+            ) => {
+                self.state = TransactionState::CurrencyPlanDone;
+                Ok(self.to_string())
+            }
+            (
+                TransactionState::ExchangeCurrencyAtPayer,
+                TransactionTransition::ExChangeCurrencyDoneAtPayer,
+            ) => {
+                self.state = TransactionState::CurrencyPlanDone;
+                Ok(self.to_string())
+            }
+            (TransactionState::CurrencyPlanDone, TransactionTransition::SendTransactionSync) => {
+                self.state = TransactionState::HalfTransaction;
+                Ok(self.to_string())
+            }
+            (
+                TransactionState::HalfTransaction,
+                TransactionTransition::SendAndRecvTransactionConfirm,
+            ) => {
+                self.state = TransactionState::EndTransaction;
                 Ok(self.to_string())
             }
             _ => Err(Error::TransitionNotFound),

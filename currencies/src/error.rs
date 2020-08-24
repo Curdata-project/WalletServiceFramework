@@ -16,6 +16,8 @@ pub enum Error {
     CurrencyUnlockError,
     CurrencyByidNotFound,
     CurrencyParamInvalid,
+    AvailCurrencyNotEnough,
+    PickCurrencyError,
 }
 
 impl Error {
@@ -45,6 +47,14 @@ impl Error {
             Error::CurrencyParamInvalid => EwfError::JsonRpcError {
                 code: 2003i64,
                 msg: "输入货币未通过校验".to_string(),
+            },
+            Error::AvailCurrencyNotEnough => EwfError::JsonRpcError {
+                code: 2004i64,
+                msg: "可用货币不足".to_string(),
+            },
+            Error::PickCurrencyError => EwfError::JsonRpcError {
+                code: 2005i64,
+                msg: "取可用货币失败".to_string(),
             },
         }
     }

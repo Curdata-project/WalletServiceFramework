@@ -1,5 +1,7 @@
 use kv_object::sm2::{CertificateSm2, KeyPairSm2};
 use serde::{Deserialize, Serialize};
+use common_structure::digital_currency::DigitalCurrencyWrapper;
+use common_structure::transaction::TransactionWrapper;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum KeyPairEntity {
@@ -42,4 +44,16 @@ pub struct RegisterRequest {
 pub struct RegisterResponse {
     pub uid: String,
     pub cert: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignTransactionRequest {
+    pub uid: String,
+    pub oppo_cert: CertificateSm2,
+    pub datas: Vec<DigitalCurrencyWrapper>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignTransactionResponse {
+    pub datas: Vec<TransactionWrapper>,
 }

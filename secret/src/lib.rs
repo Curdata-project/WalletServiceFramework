@@ -34,9 +34,12 @@ use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 use wallet_common::secret::{
     CertificateEntity, KeyPairEntity, RegisterParam, RegisterRequest, RegisterResponse,
-    SecretEntity,
+    SecretEntity, SignTransactionRequest, SignTransactionResponse,
 };
 use wallet_common::user::UserEntity;
+use common_structure::transaction::{Transaction, TransactionWrapper};
+use kv_object::prelude::KValueObject;
+use kv_object::kv_object::MsgType;
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -274,6 +277,38 @@ impl SecretModule {
 
         Ok(rets)
     }
+
+    /// 模块对外接口
+    /// 加密传入的交易体
+    ///     传入交易体
+    ///         
+    /// 异常信息
+    ///     
+    fn sign_transaction(
+        db_conn: &SqliteConnection,
+        query_param: &SignTransactionRequest,
+    ) -> Result<SignTransactionResponse, Error> {
+        let user_secret = Self::get_secret(db_conn, &query_param.uid)?;
+
+        let user_keypair = match user_secret.keypair {
+            KeyPairEntity::Sm2(user_keypair) => user_keypair,
+        };
+
+        let mut rng = common_structure::get_rng_core();
+
+        let mut ret = Vec::<TransactionWrapper>::new();
+        for each in &query_param.datas {
+            let mut transaction = TransactionWrapper::new(
+                MsgType::Transaction,
+                Transaction::new(query_param.oppo_cert.clone(), each.clone()),
+            );
+            transaction.fill_kvhead(&user_keypair, &mut rng).map_err(|_| Error::SignTransactionError)?;
+
+            ret.push(transaction);
+        }
+
+        Ok(SignTransactionResponse{datas: ret })
+    }
 }
 
 impl Actor for SecretModule {
@@ -342,6 +377,14 @@ impl Handler<Call> for SecretModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::query_secret_comb(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "sign_transaction" => {
+                    let param: SignTransactionRequest = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::sign_transaction(&db_conn, &param)
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 _ => return Err(EwfError::MethodNotFoundError),

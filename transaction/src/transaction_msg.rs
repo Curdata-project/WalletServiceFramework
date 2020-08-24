@@ -1,4 +1,6 @@
 use crate::error::Error;
+use crate::tx_payload_mgr::PeerCurrencyPlan;
+use common_structure::transaction::TransactionWrapper;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wallet_common::currencies::CurrencyStatisticsItem;
@@ -42,7 +44,9 @@ impl TXMsgPackageData for TransactionContextSyn {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionContextAck {}
+pub struct TransactionContextAck {
+    pub exchangers: Vec<TransactionExchangerItem>,
+}
 
 impl TXMsgPackageData for TransactionContextAck {
     fn get_msgtype() -> String {
@@ -58,5 +62,36 @@ pub struct CurrencyStat {
 impl TXMsgPackageData for CurrencyStat {
     fn get_msgtype() -> String {
         "CurrencyStat".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyPlan {
+    pub peer_plans: Vec<PeerCurrencyPlan>,
+}
+
+impl TXMsgPackageData for CurrencyPlan {
+    fn get_msgtype() -> String {
+        "CurrencyPlan".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionSyn {
+    pub tx_datas: Vec<TransactionWrapper>,
+}
+
+impl TXMsgPackageData for TransactionSyn {
+    fn get_msgtype() -> String {
+        "TransactionSyn".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionConfirm {}
+
+impl TXMsgPackageData for TransactionConfirm {
+    fn get_msgtype() -> String {
+        "TransactionConfirm".to_string()
     }
 }

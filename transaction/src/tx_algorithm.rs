@@ -1,6 +1,7 @@
 use crate::error::Error;
-use std::cmp::min;
+use std::cmp::{min, max};
 use wallet_common::currencies::CurrencyStatisticsItem;
+use wallet_common::transaction::CurrencyPlanItem;
 
 ///  收款方提供列表用以找零
 ///
@@ -12,12 +13,9 @@ pub fn get_currenics_for_change(
 
     currencies.sort();
 
-    let mut last = 10000u64;
+    let mut last = 20000u64;
     for each in currencies {
-        if each.value == 10000 {
-            continue;
-        }
-        let need_num = min(last / each.value - 1, each.num);
+        let need_num = max(0, min(last / each.value - 1, each.num));
 
         if need_num > 0 {
             ret.push(CurrencyStatisticsItem {
@@ -138,29 +136,22 @@ pub fn find_cover_currency_plan_patch(
     Err(Error::TXPayBalanceNotEnough)
 }
 
-pub struct CurrencyPlan {
-    pub pay_amount: u64,
-    pub pay_plan: Vec<CurrencyStatisticsItem>,
-    pub change_amount: u64,
-    pub change_plan: Vec<CurrencyStatisticsItem>,
-}
-
 pub fn find_currency_plan(
     payer: Vec<CurrencyStatisticsItem>,
     recv: Vec<CurrencyStatisticsItem>,
     amount: u64,
-) -> Result<CurrencyPlan, Error> {
+) -> Result<CurrencyPlanItem, Error> {
     let mut ret_pay_list = Vec::<CurrencyStatisticsItem>::new();
     let mut ret_recv_list = Vec::<CurrencyStatisticsItem>::new();
 
     let base_amount = match find_cover_currency_plan_patch(&payer, amount) {
         Ok((ans_amount, ans_plan)) => {
             if ans_amount == amount {
-                return Ok(CurrencyPlan {
+                return Ok(CurrencyPlanItem {
                     pay_amount: ans_amount,
                     pay_plan: ans_plan,
-                    change_amount: 0,
-                    change_plan: Vec::<CurrencyStatisticsItem>::new(),
+                    recv_amount: 0,
+                    recv_plan: Vec::<CurrencyStatisticsItem>::new(),
                 });
             }
             ans_amount
@@ -175,18 +166,18 @@ pub fn find_currency_plan(
             find_cover_currency_plan_patch(&payer, cur_amount),
             find_cover_currency_plan_patch(&recv, addition_amount),
         ) {
-            (Ok((pay_amount, pay_plan)), Ok((change_amount, change_plan))) => {
-                if pay_amount == cur_amount && change_amount == addition_amount {
-                    return Ok(CurrencyPlan {
+            (Ok((pay_amount, pay_plan)), Ok((recv_amount, recv_plan))) => {
+                if pay_amount == cur_amount && recv_amount == addition_amount {
+                    return Ok(CurrencyPlanItem {
                         pay_amount,
                         pay_plan,
-                        change_amount,
-                        change_plan,
+                        recv_amount,
+                        recv_plan,
                     });
                 }
             }
-            (_, _) => return Err(Error::TXPayBalanceNotEnough),
+            (_, _) => return Err(Error::TXPayNotAvailChangePlan),
         };
     }
-    Err(Error::TXPayBalanceNotEnough)
+    Err(Error::TXPayNotAvailChangePlan)
 }

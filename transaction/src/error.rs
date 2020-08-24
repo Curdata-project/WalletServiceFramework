@@ -11,6 +11,8 @@ pub enum Error {
     TXCLOCKSKEWTOOLARGE,
     TXSequenceNotExpect,
     TXPayBalanceNotEnough,
+    TXPayNotAvailChangePlan,
+    TXCurrencyPlanNotValid,
 
     TXExpectError,
 }
@@ -26,6 +28,10 @@ impl Error {
             Error::TXCLOCKSKEWTOOLARGE => EwfError::OtherError("交易时钟偏差过大".to_string()),
             Error::TXSequenceNotExpect => EwfError::OtherError("交易序列异常".to_string()),
             Error::TXPayBalanceNotEnough => EwfError::OtherError("交易金额不足".to_string()),
+            Error::TXPayNotAvailChangePlan => EwfError::OtherError("没有可用找零方案".to_string()),
+            Error::TXCurrencyPlanNotValid => {
+                EwfError::OtherError("交易收到的支付方案不合法".to_string())
+            }
             Error::TXExpectError => EwfError::OtherError("交易意外出错".to_string()),
         }
     }

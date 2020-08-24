@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::transaction_msg::CurrencyStat;
 use crate::TransactionModule;
 use actix::prelude::*;
 use chrono::prelude::Local;
@@ -14,11 +15,17 @@ use std::collections::hash_map::HashMap;
 use std::time::Duration;
 use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage};
 use wallet_common::transaction::{
-    TXCloseRequest, TXSendRequest, TXSendResponse, TransactionExchangerItem,
+    CurrencyPlanItem, TXCloseRequest, TXSendRequest, TXSendResponse, TransactionExchangerItem,
 };
 
 const CHECK_CLOSE_INTERVAL: u64 = 3;
 const MAX_CLOSE_TIME_MS: i64 = 2000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerCurrencyPlan {
+    pub uid: String,
+    pub item: CurrencyPlanItem,
+}
 
 #[derive(Clone)]
 pub struct TransactionPayload {
@@ -27,9 +34,12 @@ pub struct TransactionPayload {
     pub is_payer: bool,
     pub amount: u64,
     pub oppo_uid: String,
-    pub pay_plan: Vec<(u64, u64)>,
-    pub recv_plan: Vec<(u64, u64)>,
-    pub pay_list: Vec<DigitalCurrencyWrapper>,
+
+    /// 支付者的零钱，参与支付方案运算，当is_payer为false时有值
+    pub pay_currency_stat: Option<CurrencyStat>,
+
+    /// 收款方计算出的或支付者接收的支付计划
+    pub currency_plan: Vec<PeerCurrencyPlan>,
 
     // 使用txid与conn管理交互
     pub txid: String,
@@ -46,9 +56,8 @@ impl TransactionPayload {
             is_payer: false,
             amount: 0,
             oppo_uid: "".to_string(),
-            pay_plan: Vec::<(u64, u64)>::new(),
-            recv_plan: Vec::<(u64, u64)>::new(),
-            pay_list: Vec::<DigitalCurrencyWrapper>::new(),
+            pay_currency_stat: None,
+            currency_plan: Vec::<PeerCurrencyPlan>::new(),
             txid,
             tx_sm_id,
             last_update_time: Local::now().timestamp_millis(),
@@ -135,6 +144,7 @@ pub(crate) struct MemFnTXPayloadMgrCreateResult {
 pub(crate) struct MemFnTXSetPaymentPlan {
     pub txid: String,
     pub uid: String,
+    pub oppo_uid: String,
 
     pub exchangers: Vec<TransactionExchangerItem>,
 }
@@ -157,6 +167,20 @@ pub(crate) struct MemFnTXPayloadGet {
 #[rtype(result = "Result<TransactionPayload, Error>")]
 pub(crate) struct MemFnTXPayloadGetBySmid {
     pub tx_sm_id: u64,
+}
+
+#[derive(Debug, Message, Clone)]
+#[rtype(result = "Result<(), Error>")]
+pub(crate) struct MemFnTXSetPayCurrencyStat {
+    pub tx_sm_id: u64,
+    pub currency_stat: CurrencyStat,
+}
+
+#[derive(Debug, Message, Clone)]
+#[rtype(result = "Result<(), Error>")]
+pub(crate) struct MemFnTXSetCurrencyPlan {
+    pub tx_sm_id: u64,
+    pub peer_plan: Vec<PeerCurrencyPlan>,
 }
 
 impl Handler<MemFnTXPayloadMgrCreate> for TXPayloadMgr {
@@ -211,6 +235,7 @@ impl Handler<MemFnTXSetPaymentPlan> for TXPayloadMgr {
             payload.exchangers.extend_from_slice(&params.exchangers[..]);
             payload.is_payer = is_payer;
             payload.amount = amount;
+            payload.oppo_uid = params.oppo_uid;
         }
 
         Ok(())
@@ -254,6 +279,36 @@ impl Handler<MemFnTXPayloadGetBySmid> for TXPayloadMgr {
     ) -> Self::Result {
         match self.tx_sm_datas.get(&params.tx_sm_id) {
             Some(ans) => Ok(ans.clone()),
+            None => Err(Error::TXMachineDestoryed),
+        }
+    }
+}
+
+impl Handler<MemFnTXSetPayCurrencyStat> for TXPayloadMgr {
+    type Result = Result<(), Error>;
+    fn handle(
+        &mut self,
+        params: MemFnTXSetPayCurrencyStat,
+        _ctx: &mut Context<Self>,
+    ) -> Self::Result {
+        match self.tx_sm_datas.get_mut(&params.tx_sm_id) {
+            Some(mut payload) => {
+                payload.pay_currency_stat = Some(params.currency_stat);
+                Ok(())
+            }
+            None => Err(Error::TXMachineDestoryed),
+        }
+    }
+}
+
+impl Handler<MemFnTXSetCurrencyPlan> for TXPayloadMgr {
+    type Result = Result<(), Error>;
+    fn handle(&mut self, params: MemFnTXSetCurrencyPlan, _ctx: &mut Context<Self>) -> Self::Result {
+        match self.tx_sm_datas.get_mut(&params.tx_sm_id) {
+            Some(mut payload) => {
+                payload.currency_plan.extend_from_slice(&params.peer_plan);
+                Ok(())
+            }
             None => Err(Error::TXMachineDestoryed),
         }
     }

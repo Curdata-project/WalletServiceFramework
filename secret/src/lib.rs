@@ -29,6 +29,9 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use std::fmt;
 
+use common_structure::transaction::{Transaction, TransactionWrapper};
+use kv_object::kv_object::MsgType;
+use kv_object::prelude::KValueObject;
 use wallet_common::http_cli::reqwest_json;
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
@@ -37,9 +40,6 @@ use wallet_common::secret::{
     SecretEntity, SignTransactionRequest, SignTransactionResponse,
 };
 use wallet_common::user::UserEntity;
-use common_structure::transaction::{Transaction, TransactionWrapper};
-use kv_object::prelude::KValueObject;
-use kv_object::kv_object::MsgType;
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 
@@ -68,8 +68,10 @@ impl fmt::Debug for SecretModule {
 impl SecretModule {
     pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
-            pool: Pool::new(ConnectionManager::new(&path))
-                .map_err(|_| EwfError::ModuleInstanceError)?,
+            pool: Pool::new(ConnectionManager::new(&path)).map_err(|err| {
+                log::error!("{:?}", err);
+                EwfError::ModuleInstanceError
+            })?,
             bus_addr: None,
         })
     }
@@ -84,6 +86,7 @@ impl SecretModule {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
+            log::error!("{:?}", err);
             return Err(Error::DatabaseInstallError);
         }
 
@@ -108,10 +111,13 @@ impl SecretModule {
 
     /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_secret: &NewSecretStore) -> Result<(), Error> {
-        let affect_rows = diesel::insert_into(secret_store)
+        let affect_rows = diesel::replace_into(secret_store)
             .values(new_secret)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -124,7 +130,10 @@ impl SecretModule {
     fn delete(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(secret_store.find(id))
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseDeleteError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseDeleteError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseDeleteError);
@@ -154,7 +163,13 @@ impl SecretModule {
             info: param.info,
         };
 
-        match reqwest_json(&param.url, serde_json::to_value(register_req).unwrap(), 5).await {
+        match reqwest_json(
+            &param.url,
+            serde_json::to_value(register_req).unwrap(),
+            param.timeout,
+        )
+        .await
+        {
             Err(err) => return Err(Error::HttpError(err)),
             Ok(resp) => {
                 if resp["code"] == json!(0) {
@@ -180,7 +195,7 @@ impl SecretModule {
                         cert: new_secret.cert.to_string(),
                     })
                 } else {
-                    log::info!(
+                    log::warn!(
                         "response from {} err_code {}: message {}",
                         param.url,
                         resp["code"],
@@ -296,18 +311,20 @@ impl SecretModule {
 
         let mut rng = common_structure::get_rng_core();
 
-        let mut ret = Vec::<TransactionWrapper>::new();
+        let mut ret = Vec::<String>::new();
         for each in &query_param.datas {
             let mut transaction = TransactionWrapper::new(
                 MsgType::Transaction,
                 Transaction::new(query_param.oppo_cert.clone(), each.clone()),
             );
-            transaction.fill_kvhead(&user_keypair, &mut rng).map_err(|_| Error::SignTransactionError)?;
+            transaction
+                .fill_kvhead(&user_keypair, &mut rng)
+                .map_err(|_| Error::SignTransactionError)?;
 
-            ret.push(transaction);
+            ret.push(transaction.to_bytes().encode_hex::<String>());
         }
 
-        Ok(SignTransactionResponse{datas: ret })
+        Ok(SignTransactionResponse { datas: ret })
     }
 }
 

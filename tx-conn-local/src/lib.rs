@@ -164,7 +164,7 @@ impl Handler<Call> for TXConnModule {
 
                     Ok(Value::Null)
                 }
-                _ => Ok(Value::Null),
+                _ => Err(EwfError::MethodNotFoundError),
             }
         })
     }

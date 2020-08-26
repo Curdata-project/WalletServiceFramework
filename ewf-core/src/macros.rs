@@ -60,36 +60,6 @@ macro_rules! sync_parse_check {
 }
 
 #[macro_export]
-macro_rules! sync_ewf_error {
-    ($expression: expr) => {
-        match $expression {
-            Ok(ans) => ans,
-            Err(err) => return Box::pin(async move { Err(err.to_ewf_error()) }),
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! sync_ewf_error_spec {
-    ($expression: expr, $err: expr) => {
-        match $expression {
-            Ok(ans) => ans,
-            Err(_) => return Box::pin(async move { Err($err.to_ewf_error()) }),
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! async_ewf_error_spec {
-    ($expression: expr, $err: expr) => {
-        match $expression {
-            Ok(ans) => ans,
-            Err(_) => return Err($err.to_ewf_error()),
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! transition {
     ($bus_addr: ident, $tx_sm_id: expr, $action: expr) => {
         $bus_addr.do_send(ewf_core::Transition {

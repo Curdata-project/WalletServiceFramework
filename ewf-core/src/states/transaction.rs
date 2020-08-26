@@ -34,8 +34,8 @@ enum TransactionTransition {
     RecvCurrencyPlanNotNeedExchange,
     RecvCurrencyPlanNeedExchange,
     ExChangeCurrencyDoneAtPayer,
-    SendTransactionSync,
-    SendAndRecvTransactionConfirm,
+    RecvTransactionSyncAndSendConfirm,
+    RecvTransactionConfirm,
 }
 
 impl From<String> for TransactionTransition {
@@ -63,8 +63,10 @@ impl From<String> for TransactionTransition {
             }
             "RecvCurrencyPlanNeedExchange" => TransactionTransition::RecvCurrencyPlanNeedExchange,
             "ExChangeCurrencyDoneAtPayer" => TransactionTransition::ExChangeCurrencyDoneAtPayer,
-            "SendTransactionSync" => TransactionTransition::SendTransactionSync,
-            "SendAndRecvTransactionConfirm" => TransactionTransition::SendAndRecvTransactionConfirm,
+            "RecvTransactionSyncAndSendConfirm" => {
+                TransactionTransition::RecvTransactionSyncAndSendConfirm
+            }
+            "RecvTransactionConfirm" => TransactionTransition::RecvTransactionConfirm,
             _ => TransactionTransition::PaymentPlanSyn,
         }
     }
@@ -131,13 +133,6 @@ impl Machine for TransactionMachine {
                 self.state = TransactionState::PaymentPlanDone;
                 Ok(self.to_string())
             }
-            (
-                TransactionState::PaymentPlanDone,
-                TransactionTransition::IsPayerAndSendCurrencyStat,
-            ) => {
-                self.state = TransactionState::SendCurrencyStat;
-                Ok(self.to_string())
-            }
             // 收款方
             (TransactionState::PaymentPlanDone, TransactionTransition::IsReceiver) => {
                 self.state = TransactionState::WaitCurrencyStat;
@@ -198,14 +193,14 @@ impl Machine for TransactionMachine {
                 self.state = TransactionState::CurrencyPlanDone;
                 Ok(self.to_string())
             }
-            (TransactionState::CurrencyPlanDone, TransactionTransition::SendTransactionSync) => {
+            (
+                TransactionState::CurrencyPlanDone,
+                TransactionTransition::RecvTransactionSyncAndSendConfirm,
+            ) => {
                 self.state = TransactionState::HalfTransaction;
                 Ok(self.to_string())
             }
-            (
-                TransactionState::HalfTransaction,
-                TransactionTransition::SendAndRecvTransactionConfirm,
-            ) => {
+            (TransactionState::HalfTransaction, TransactionTransition::RecvTransactionConfirm) => {
                 self.state = TransactionState::EndTransaction;
                 Ok(self.to_string())
             }

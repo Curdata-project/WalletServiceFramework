@@ -89,7 +89,7 @@ impl Bus {
 
     pub fn transite(&mut self, msg: Transition) -> Result<(), Error> {
         let (id, machine, event) = self.machines.transition(msg.id, msg.transition)?;
-        log::info!("machine {} transition => {}", machine, event);
+        log::info!("machine {}_{} transition => {}", machine, id, event);
         for pp in self.priorities.iter() {
             if let Some(caller) = self.event_caller.get(&pp.1) {
                 caller.do_send(Event {

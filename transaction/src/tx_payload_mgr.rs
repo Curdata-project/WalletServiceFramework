@@ -5,6 +5,7 @@ use actix::prelude::*;
 use chrono::prelude::Local;
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::get_rng_core;
+use common_structure::transaction::TransactionWrapper;
 use ewf_core::message::Call;
 use hex::ToHex;
 use rand::RngCore;
@@ -14,6 +15,7 @@ use serde_json::Value;
 use std::collections::hash_map::HashMap;
 use std::time::Duration;
 use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage};
+use wallet_common::currencies::CurrencyEntity;
 use wallet_common::transaction::{
     CurrencyPlanItem, TXCloseRequest, TXSendRequest, TXSendResponse, TransactionExchangerItem,
 };
@@ -30,16 +32,22 @@ pub struct PeerCurrencyPlan {
 #[derive(Clone)]
 pub struct TransactionPayload {
     pub uid: String,
-    pub exchangers: Vec<TransactionExchangerItem>,
+    pub self_exchanger: Option<TransactionExchangerItem>,
+    pub other_exchangers: Vec<TransactionExchangerItem>,
     pub is_payer: bool,
     pub amount: u64,
     pub oppo_uid: String,
 
-    /// 支付者的零钱，参与支付方案运算，当is_payer为false时有值
+    /// 支付者的零钱，收款方用来计算支付方案的，当is_payer为false时有值
     pub pay_currency_stat: Option<CurrencyStat>,
 
     /// 收款方计算出的或支付者接收的支付计划
     pub currency_plan: Vec<PeerCurrencyPlan>,
+
+    /// 支付货币的id集合
+    pub pay_lock_currencys: Vec<String>,
+    /// 收到货币的transaction字符串集合
+    pub recv_wait_confirm_currencys: Vec<String>,
 
     // 使用txid与conn管理交互
     pub txid: String,
@@ -52,12 +60,15 @@ impl TransactionPayload {
     fn new(uid: String, tx_sm_id: u64, txid: String) -> Self {
         Self {
             uid,
-            exchangers: Vec::<TransactionExchangerItem>::new(),
+            self_exchanger: None,
+            other_exchangers: Vec::<TransactionExchangerItem>::new(),
             is_payer: false,
             amount: 0,
             oppo_uid: "".to_string(),
             pay_currency_stat: None,
             currency_plan: Vec::<PeerCurrencyPlan>::new(),
+            pay_lock_currencys: Vec::<String>::new(),
+            recv_wait_confirm_currencys: Vec::<String>::new(),
             txid,
             tx_sm_id,
             last_update_time: Local::now().timestamp_millis(),
@@ -146,11 +157,12 @@ pub(crate) struct MemFnTXSetPaymentPlan {
     pub uid: String,
     pub oppo_uid: String,
 
-    pub exchangers: Vec<TransactionExchangerItem>,
+    pub self_exchanger: Option<TransactionExchangerItem>,
+    pub other_exchangers: Option<Vec<TransactionExchangerItem>>,
 }
 
 #[derive(Debug, Message, Clone)]
-#[rtype(result = "()")]
+#[rtype(result = "Option<TransactionPayload>")]
 pub(crate) struct MemFnTXPayloadMgrClose {
     pub txid: String,
     pub uid: String,
@@ -181,6 +193,26 @@ pub(crate) struct MemFnTXSetPayCurrencyStat {
 pub(crate) struct MemFnTXSetCurrencyPlan {
     pub tx_sm_id: u64,
     pub peer_plan: Vec<PeerCurrencyPlan>,
+}
+
+#[derive(Debug, Message, Clone)]
+#[rtype(result = "Result<(), Error>")]
+pub(crate) struct MemFnTXSetPayLockCurrencys {
+    pub tx_sm_id: u64,
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Message, Clone)]
+#[rtype(result = "Result<(), Error>")]
+pub(crate) struct MemFnTXSetRecvWaitConfirmCurrencys {
+    pub tx_sm_id: u64,
+    pub currencys: Vec<String>,
+}
+
+#[derive(Debug, Message, Clone)]
+#[rtype(result = "Result<(), Error>")]
+pub(crate) struct MemFnTXTransactionConfirm {
+    pub tx_sm_id: u64,
 }
 
 impl Handler<MemFnTXPayloadMgrCreate> for TXPayloadMgr {
@@ -215,27 +247,27 @@ impl Handler<MemFnTXSetPaymentPlan> for TXPayloadMgr {
         }
         .clone();
 
-        let mut iter = params
-            .exchangers
-            .iter()
-            .filter(|each| each.uid == params.uid);
-        let user_exchanger = if let Some(exchanger) = iter.next() {
-            exchanger
-        } else {
-            return Err(Error::TXPaymentPlanNotForUser);
-        };
+        if let Some(user_exchanger) = params.self_exchanger {
+            let (is_payer, amount) = if user_exchanger.output > user_exchanger.input {
+                (true, user_exchanger.output - user_exchanger.input)
+            } else {
+                (false, user_exchanger.input - user_exchanger.output)
+            };
 
-        let (is_payer, amount) = if user_exchanger.output > user_exchanger.intput {
-            (true, user_exchanger.output - user_exchanger.intput)
-        } else {
-            (false, user_exchanger.intput - user_exchanger.output)
-        };
+            if let Some(payload) = self.tx_sm_datas.get_mut(&tx_sm_id) {
+                payload.self_exchanger = Some(user_exchanger);
+                payload.is_payer = is_payer;
+                payload.amount = amount;
+                payload.oppo_uid = params.oppo_uid;
+            }
+        }
 
-        if let Some(payload) = self.tx_sm_datas.get_mut(&tx_sm_id) {
-            payload.exchangers.extend_from_slice(&params.exchangers[..]);
-            payload.is_payer = is_payer;
-            payload.amount = amount;
-            payload.oppo_uid = params.oppo_uid;
+        if let Some(other_exchangers) = params.other_exchangers {
+            if let Some(payload) = self.tx_sm_datas.get_mut(&tx_sm_id) {
+                payload
+                    .other_exchangers
+                    .extend_from_slice(&other_exchangers[..]);
+            }
         }
 
         Ok(())
@@ -243,16 +275,18 @@ impl Handler<MemFnTXSetPaymentPlan> for TXPayloadMgr {
 }
 
 impl Handler<MemFnTXPayloadMgrClose> for TXPayloadMgr {
-    type Result = ();
+    type Result = Option<TransactionPayload>;
     fn handle(&mut self, params: MemFnTXPayloadMgrClose, _ctx: &mut Context<Self>) -> Self::Result {
         if let Some(tx_sm_id) = self
             .tx_link
             .get_mut(&(params.txid.clone(), params.uid.clone()))
         {
-            self.tx_sm_datas.remove(&tx_sm_id);
+            return self.tx_sm_datas.remove(&tx_sm_id);
         }
         self.tx_link
             .remove(&(params.txid.clone(), params.uid.clone()));
+
+        None
     }
 }
 
@@ -307,6 +341,60 @@ impl Handler<MemFnTXSetCurrencyPlan> for TXPayloadMgr {
         match self.tx_sm_datas.get_mut(&params.tx_sm_id) {
             Some(mut payload) => {
                 payload.currency_plan.extend_from_slice(&params.peer_plan);
+                Ok(())
+            }
+            None => Err(Error::TXMachineDestoryed),
+        }
+    }
+}
+
+impl Handler<MemFnTXSetPayLockCurrencys> for TXPayloadMgr {
+    type Result = Result<(), Error>;
+    fn handle(
+        &mut self,
+        params: MemFnTXSetPayLockCurrencys,
+        _ctx: &mut Context<Self>,
+    ) -> Self::Result {
+        match self.tx_sm_datas.get_mut(&params.tx_sm_id) {
+            Some(mut payload) => {
+                payload.pay_lock_currencys.extend_from_slice(&params.ids);
+                Ok(())
+            }
+            None => Err(Error::TXMachineDestoryed),
+        }
+    }
+}
+
+impl Handler<MemFnTXSetRecvWaitConfirmCurrencys> for TXPayloadMgr {
+    type Result = Result<(), Error>;
+    fn handle(
+        &mut self,
+        params: MemFnTXSetRecvWaitConfirmCurrencys,
+        _ctx: &mut Context<Self>,
+    ) -> Self::Result {
+        match self.tx_sm_datas.get_mut(&params.tx_sm_id) {
+            Some(mut payload) => {
+                payload
+                    .recv_wait_confirm_currencys
+                    .extend_from_slice(&params.currencys);
+                Ok(())
+            }
+            None => Err(Error::TXMachineDestoryed),
+        }
+    }
+}
+
+impl Handler<MemFnTXTransactionConfirm> for TXPayloadMgr {
+    type Result = Result<(), Error>;
+    fn handle(
+        &mut self,
+        params: MemFnTXTransactionConfirm,
+        _ctx: &mut Context<Self>,
+    ) -> Self::Result {
+        match self.tx_sm_datas.get_mut(&params.tx_sm_id) {
+            Some(mut payload) => {
+                payload.pay_lock_currencys.clear();
+                payload.recv_wait_confirm_currencys.clear();
                 Ok(())
             }
             None => Err(Error::TXMachineDestoryed),

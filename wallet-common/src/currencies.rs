@@ -86,7 +86,7 @@ pub enum AddCurrencyParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnlockCurrencyParam {
+pub struct ConfirmCurrencyParam {
     pub owner_uid: String,
     pub currency: DigitalCurrencyWrapper,
 }
@@ -106,26 +106,26 @@ pub struct QueryCurrencyStatisticsParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CurrencyStatisticsItem {
+pub struct StatisticsItem {
     pub value: u64,
     pub num: u64,
 }
 
-impl PartialEq for CurrencyStatisticsItem {
+impl PartialEq for StatisticsItem {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
     }
 }
 
-impl PartialOrd for CurrencyStatisticsItem {
+impl PartialOrd for StatisticsItem {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         other.value.partial_cmp(&self.value)
     }
 }
 
-impl Eq for CurrencyStatisticsItem {}
+impl Eq for StatisticsItem {}
 
-impl Ord for CurrencyStatisticsItem {
+impl Ord for StatisticsItem {
     fn cmp(&self, other: &Self) -> Ordering {
         self.value.cmp(&other.value)
     }
@@ -133,6 +133,54 @@ impl Ord for CurrencyStatisticsItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PickSpecifiedNumCurrencyParam {
-    pub items: Vec<CurrencyStatisticsItem>,
+    pub items: Vec<StatisticsItem>,
     pub owner_uid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnLockCurrencyParam {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyDepositInfo {
+    pub uid: String,
+    pub cert: String,
+    pub bank_num: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyDepositParam {
+    pub url: String,
+    pub timeout: u64,
+    pub info: CurrencyDepositInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyWithdrawInfo {
+    pub uid: String,
+    pub bank_num: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyWithdrawParam {
+    pub url: String,
+    pub timeout: u64,
+    pub info: CurrencyWithdrawInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertInfo {
+    pub uid: String,
+    pub amount: u64,
+    pub plan: Vec<(u64, u64)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertParam {
+    pub url: String,
+    pub timeout: u64,
+    pub info: CurrencyConvertInfo,
 }

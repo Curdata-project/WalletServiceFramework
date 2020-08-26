@@ -1,7 +1,7 @@
-use kv_object::sm2::{CertificateSm2, KeyPairSm2};
-use serde::{Deserialize, Serialize};
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::transaction::TransactionWrapper;
+use kv_object::sm2::{CertificateSm2, KeyPairSm2};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum KeyPairEntity {
@@ -55,5 +55,5 @@ pub struct SignTransactionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignTransactionResponse {
-    pub datas: Vec<TransactionWrapper>,
+    pub datas: Vec<String>,
 }

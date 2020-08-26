@@ -1,4 +1,4 @@
-use crate::currencies::CurrencyStatisticsItem;
+use crate::currencies::StatisticsItem;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -6,7 +6,8 @@ use serde_json::Value;
 pub struct TXSendRequest {
     pub uid: String,
     pub oppo_peer_uid: String,
-    pub exchangers: Vec<TransactionExchangerItem>,
+    pub input: u64,
+    pub output: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,9 +26,8 @@ pub struct TXCloseRequest {
 pub struct TransactionExchangerItem {
     pub uid: String,
     pub cert: String,
-    pub account: String,
     pub output: u64,
-    pub intput: u64,
+    pub input: u64,
     /// 预留字段
     pub addition: Value,
 }
@@ -35,7 +35,7 @@ pub struct TransactionExchangerItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrencyPlanItem {
     pub pay_amount: u64,
-    pub pay_plan: Vec<CurrencyStatisticsItem>,
+    pub pay_plan: Vec<StatisticsItem>,
     pub recv_amount: u64,
-    pub recv_plan: Vec<CurrencyStatisticsItem>,
+    pub recv_plan: Vec<StatisticsItem>,
 }

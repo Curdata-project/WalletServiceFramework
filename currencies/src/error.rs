@@ -13,11 +13,19 @@ pub enum Error {
     DatabaseJsonDeSerializeError,
     CallParamValidFaild,
 
-    CurrencyUnlockError,
+    CurrencyConfirmError,
     CurrencyByidNotFound,
     CurrencyParamInvalid,
     AvailCurrencyNotEnough,
     PickCurrencyError,
+    CurrencyUnlockError,
+    HttpError(String),
+    DepositError(String),
+    WithdrawError(String),
+    ConvertError(String),
+    DepositResponseInvaild,
+    WithdrawResponseInvaild,
+    ConvertResponseInvaild,
 }
 
 impl Error {
@@ -34,11 +42,20 @@ impl Error {
             Error::DatabaseJsonDeSerializeError => {
                 EwfError::OtherError("DatabaseJsonDeSerializeError".to_string())
             }
+            Error::DepositResponseInvaild => {
+                EwfError::OtherError("DepositResponseInvaild".to_string())
+            }
+            Error::WithdrawResponseInvaild => {
+                EwfError::OtherError("WithdrawResponseInvaild".to_string())
+            }
+            Error::ConvertResponseInvaild => {
+                EwfError::OtherError("ConvertResponseInvaild".to_string())
+            }
             Error::CallParamValidFaild => EwfError::CallParamValidFaild,
 
-            Error::CurrencyUnlockError => EwfError::JsonRpcError {
+            Error::CurrencyConfirmError => EwfError::JsonRpcError {
                 code: 2001i64,
-                msg: "货币解锁失败".to_string(),
+                msg: "货币交易确认失败".to_string(),
             },
             Error::CurrencyByidNotFound => EwfError::JsonRpcError {
                 code: 2002i64,
@@ -55,6 +72,26 @@ impl Error {
             Error::PickCurrencyError => EwfError::JsonRpcError {
                 code: 2005i64,
                 msg: "取可用货币失败".to_string(),
+            },
+            Error::CurrencyUnlockError => EwfError::JsonRpcError {
+                code: 2006i64,
+                msg: "解锁交易货币失败".to_string(),
+            },
+            Error::HttpError(err) => EwfError::JsonRpcError {
+                code: 2007i64,
+                msg: format!("服务器请求失败: {}", err),
+            },
+            Error::DepositError(err) => EwfError::JsonRpcError {
+                code: 2008i64,
+                msg: format!("充值失败: ({})", err),
+            },
+            Error::WithdrawError(err) => EwfError::JsonRpcError {
+                code: 2009i64,
+                msg: format!("提现失败: ({})", err),
+            },
+            Error::ConvertError(err) => EwfError::JsonRpcError {
+                code: 2010i64,
+                msg: format!("兑换失败: ({})", err),
             },
         }
     }

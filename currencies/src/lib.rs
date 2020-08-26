@@ -27,15 +27,20 @@ use ewf_core::async_parse_check;
 use ewf_core::error::Error as EwfError;
 use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use hex::{FromHex, ToHex};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
+use common_structure::convert_quota_request::ConvertQoutaRequestWrapper;
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::transaction::TransactionWrapper;
 use wallet_common::currencies::{
-    AddCurrencyParam, CurrencyEntity, CurrencyQuery, CurrencyStatisticsItem, CurrencyStatus,
-    PickSpecifiedNumCurrencyParam, QueryCurrencyStatisticsParam, UnlockCurrencyParam,
+    AddCurrencyParam, ConfirmCurrencyParam, CurrencyConvertParam, CurrencyDepositParam,
+    CurrencyEntity, CurrencyQuery, CurrencyStatus, CurrencyWithdrawParam,
+    PickSpecifiedNumCurrencyParam, QueryCurrencyStatisticsParam, StatisticsItem,
+    UnLockCurrencyParam,
 };
+use wallet_common::http_cli::reqwest_json;
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
@@ -54,6 +59,28 @@ CREATE TABLE "currency_store" (
   )
 "#;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyDepositRequest {
+    pub target: String,
+    pub bank_num: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyDepositResponse(Vec<String>);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyWithdrawRequest {
+    pub currency: Vec<String>,
+    pub bank_num: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertRequest(ConvertQoutaRequestWrapper);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertResponse(Vec<String>);
+
 pub struct CurrenciesModule {
     pool: LocalPool,
     bus_addr: Option<Addr<Bus>>,
@@ -68,8 +95,10 @@ impl fmt::Debug for CurrenciesModule {
 impl CurrenciesModule {
     pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
-            pool: Pool::new(ConnectionManager::new(&path))
-                .map_err(|_| EwfError::ModuleInstanceError)?,
+            pool: Pool::new(ConnectionManager::new(&path)).map_err(|err| {
+                log::error!("{:?}", err);
+                EwfError::ModuleInstanceError
+            })?,
             bus_addr: None,
         })
     }
@@ -84,6 +113,7 @@ impl CurrenciesModule {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
+            log::error!("{:?}", err);
             return Err(Error::DatabaseInstallError);
         }
 
@@ -108,10 +138,13 @@ impl CurrenciesModule {
 
     /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_currency: &NewCurrencyStore) -> Result<(), Error> {
-        let affect_rows = diesel::insert_into(currency_store)
+        let affect_rows = diesel::replace_into(currency_store)
             .values(new_currency)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -120,11 +153,14 @@ impl CurrenciesModule {
     }
 
     /// 删除表格式数据
-    #[allow(dead_code)]
-    fn delete(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
+    fn remove_pay_lock_currency(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(currency_store.find(id))
+            .filter(dsl::status.eq(CurrencyStatus::Lock.to_int()))
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseDeleteError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseDeleteError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseDeleteError);
@@ -133,11 +169,11 @@ impl CurrenciesModule {
     }
 
     /// 模块对外接口
-    /// 解锁货币
-    ///     传入货币发行机构新发行的货币
+    /// 确认货币交易
+    ///     传入货币发行机构新确认的货币
     /// 异常信息
-    ///     CurrencyUnlockError 货币不存在或重复解锁导致失败
-    fn unlock_currency(
+    ///     CurrencyConfirmError 货币不存在或重复确认导致失败
+    fn confirm_currency(
         db_conn: &SqliteConnection,
         currency: &DigitalCurrencyWrapper,
     ) -> Result<(), Error> {
@@ -153,17 +189,17 @@ impl CurrenciesModule {
         let affect_rows = diesel::update(
             currency_store
                 .find(quota_id)
-                .filter(dsl::status.eq(CurrencyStatus::Lock.to_int())),
+                .filter(dsl::status.eq(CurrencyStatus::WaitConfirm.to_int())),
         )
         .set((
             dsl::currency.eq(currency_str),
             dsl::status.eq(CurrencyStatus::Avail.to_int()),
         ))
         .execute(db_conn)
-        .map_err(|_| Error::CurrencyUnlockError)?;
+        .map_err(|_| Error::CurrencyConfirmError)?;
 
         if affect_rows != 1 {
-            return Err(Error::CurrencyUnlockError);
+            return Err(Error::CurrencyConfirmError);
         }
         Ok(())
     }
@@ -236,7 +272,7 @@ impl CurrenciesModule {
                     transaction_str,
                     txid,
                     last_owner_id,
-                    CurrencyStatus::Lock,
+                    CurrencyStatus::WaitConfirm,
                 )
             }
         };
@@ -281,7 +317,7 @@ impl CurrenciesModule {
 
     fn deserialize_currency(currency: &CurrencyStore) -> Result<CurrencyEntity, Error> {
         Ok(match CurrencyStatus::from(currency.status) {
-            CurrencyStatus::Avail | CurrencyStatus::Lock => {
+            CurrencyStatus::Avail => {
                 let avail_currency = DigitalCurrencyWrapper::from_bytes(
                     &Vec::<u8>::from_hex(&currency.currency)
                         .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
@@ -299,8 +335,26 @@ impl CurrenciesModule {
                     last_owner_id: currency.last_owner_id.clone(),
                 }
             }
+            CurrencyStatus::Lock => {
+                let avail_currency = DigitalCurrencyWrapper::from_bytes(
+                    &Vec::<u8>::from_hex(&currency.currency)
+                        .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
+                )
+                .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
+
+                CurrencyEntity::LockEntity {
+                    id: currency.id.clone(),
+                    owner_uid: currency.owner_uid.clone(),
+                    value: currency.value as u64,
+                    currency: avail_currency,
+                    currency_str: currency.currency.clone(),
+                    txid: currency.txid.clone(),
+                    update_time: currency.update_time.timestamp_millis(),
+                    last_owner_id: currency.last_owner_id.clone(),
+                }
+            }
             CurrencyStatus::WaitConfirm => {
-                let lock_currency = TransactionWrapper::from_bytes(
+                let transaction = TransactionWrapper::from_bytes(
                     &Vec::<u8>::from_hex(&currency.currency)
                         .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
                 )
@@ -310,7 +364,7 @@ impl CurrenciesModule {
                     id: currency.id.clone(),
                     owner_uid: currency.owner_uid.clone(),
                     value: currency.value as u64,
-                    transaction: lock_currency,
+                    transaction: transaction,
                     transaction_str: currency.currency.clone(),
                     txid: currency.txid.clone(),
                     update_time: currency.update_time.timestamp_millis(),
@@ -354,7 +408,7 @@ impl CurrenciesModule {
     fn query_currency_statistics(
         db_conn: &SqliteConnection,
         param: &QueryCurrencyStatisticsParam,
-    ) -> Result<Vec<CurrencyStatisticsItem>, Error> {
+    ) -> Result<Vec<StatisticsItem>, Error> {
         let statistics = currency_store
             .select((
                 dsl::value,
@@ -383,9 +437,9 @@ impl CurrenciesModule {
             .load::<(i64, i64)>(db_conn)
             .map_err(|_| Error::DatabaseSelectError)?;
 
-        let mut rets = Vec::<CurrencyStatisticsItem>::new();
+        let mut rets = Vec::<StatisticsItem>::new();
         for each in statistics {
-            rets.push(CurrencyStatisticsItem {
+            rets.push(StatisticsItem {
                 value: each.0 as u64,
                 num: each.1 as u64,
             });
@@ -399,7 +453,10 @@ impl CurrenciesModule {
     ///        被选中的货币被锁定
     /// 异常信息
     ///     AvailCurrencyNotEnough 可用货币不足
-    fn pick_specified_num_currency(db_conn: &SqliteConnection, param: &PickSpecifiedNumCurrencyParam) -> Result<Vec<CurrencyEntity>, Error> {
+    fn pick_specified_num_currency(
+        db_conn: &SqliteConnection,
+        param: &PickSpecifiedNumCurrencyParam,
+    ) -> Result<Vec<CurrencyEntity>, Error> {
         let mut rets = Vec::<CurrencyEntity>::new();
 
         for statistics in &param.items {
@@ -411,7 +468,7 @@ impl CurrenciesModule {
                 .group_by(dsl::value)
                 .load(db_conn)
                 .map_err(|_| Error::DatabaseSelectError)?;
-            
+
             if currencys.len() != statistics.num as usize {
                 return Err(Error::AvailCurrencyNotEnough);
             }
@@ -420,7 +477,11 @@ impl CurrenciesModule {
                 rets.push(Self::deserialize_currency(&currency)?);
 
                 // TODO 加锁失败，全部解锁并返回错误或者重新选择一组
-                diesel::update(currency_store.filter(dsl::id.eq(currency.id)).filter(dsl::status.eq(CurrencyStatus::Avail.to_int())))
+                diesel::update(
+                    currency_store
+                        .filter(dsl::id.eq(currency.id))
+                        .filter(dsl::status.eq(CurrencyStatus::Avail.to_int())),
+                )
                 .set(dsl::status.eq(CurrencyStatus::Lock.to_int()))
                 .execute(db_conn)
                 .map_err(|_| Error::PickCurrencyError)?;
@@ -431,10 +492,106 @@ impl CurrenciesModule {
     }
 
     /// 模块对外接口
+    /// 解锁交易锁定货币
+    ///     传入锁定货币的ID集合
+    /// 异常信息
+    ///     CurrencyUnlockError 货币解锁失败
+    fn unlock_currency(
+        db_conn: &SqliteConnection,
+        param: &UnLockCurrencyParam,
+    ) -> Result<(), Error> {
+        for id in &param.ids {
+            diesel::update(
+                currency_store
+                    .filter(dsl::id.eq(id))
+                    .filter(dsl::status.eq(CurrencyStatus::Lock.to_int())),
+            )
+            .set(dsl::status.eq(CurrencyStatus::Avail.to_int()))
+            .execute(db_conn)
+            .map_err(|_| Error::CurrencyUnlockError)?;
+        }
+        Ok(())
+    }
+
+    /// 模块对外接口
     /// 充值
     /// 异常信息
-    ///     
-    fn deposit(db_conn: &SqliteConnection, owner_uid: &str) {}
+    ///     HttpError(...) 网络请求失败
+    ///     RegisterError(...) 注册请求失败
+    async fn deposit(
+        db_conn: &SqliteConnection,
+        param: &CurrencyDepositParam,
+    ) -> Result<(), Error> {
+        match reqwest_json(
+            &param.url,
+            json!(CurrencyDepositRequest {
+                bank_num: param.info.bank_num.clone(),
+                amount: param.info.amount,
+                target: param.info.cert.clone(),
+            }),
+            param.timeout,
+        )
+        .await
+        {
+            Err(err) => return Err(Error::HttpError(err)),
+            Ok(resp) => {
+                if resp["code"] == json!(0) {
+                    let reg_resp: CurrencyDepositResponse =
+                        serde_json::from_value(resp["data"].clone())
+                            .map_err(|_| Error::DepositResponseInvaild)?;
+
+                    for currency in reg_resp.0 {
+                        Self::add_currency(
+                            db_conn,
+                            &AddCurrencyParam::AvailEntity {
+                                owner_uid: param.info.uid.clone(),
+                                currency_str: currency,
+                                txid: "".to_string(),
+                                last_owner_id: "".to_string(),
+                            },
+                        )?;
+                    }
+
+                    Ok(())
+                } else {
+                    log::warn!(
+                        "response from {} err_code {}: message {}",
+                        param.url,
+                        resp["code"],
+                        resp["message"]
+                    );
+                    Err(Error::DepositError(format!(
+                        "{}, {}",
+                        resp["code"], resp["message"]
+                    )))
+                }
+            }
+        }
+    }
+
+    /// 模块对外接口
+    /// 提现
+    /// 异常信息
+    ///     HttpError(...) 网络请求失败
+    ///     WithdrawError(...) 注册请求失败
+    async fn withdraw(
+        db_conn: &SqliteConnection,
+        param: &CurrencyWithdrawParam,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// 模块对外接口
+    /// 兑换
+    /// 异常信息
+    ///     HttpError(...) 网络请求失败
+    ///     ConvertError(...) 注册请求失败
+    async fn convert(
+        db_conn: &SqliteConnection,
+        param: &CurrencyConvertParam,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl Actor for CurrenciesModule {
@@ -465,12 +622,12 @@ impl Handler<Call> for CurrenciesModule {
 
                     json!(initialed)
                 }
-                "unlock_currency" => {
-                    let param: UnlockCurrencyParam = match serde_json::from_value(msg.args) {
+                "confirm_currency" => {
+                    let param: ConfirmCurrencyParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::unlock_currency(&db_conn, &param.currency)
+                    json!(Self::confirm_currency(&db_conn, &param.currency)
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 "add_currency" => {
@@ -479,6 +636,14 @@ impl Handler<Call> for CurrenciesModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::add_currency(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
+                }
+                "remove_pay_lock_currency" => {
+                    let param: String = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::remove_pay_lock_currency(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
                 }
                 "find_currency_by_id" => {
                     let param: String = match serde_json::from_value(msg.args) {
@@ -506,12 +671,28 @@ impl Handler<Call> for CurrenciesModule {
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 "pick_specified_num_currency" => {
-                    let param: PickSpecifiedNumCurrencyParam = match serde_json::from_value(msg.args)
-                    {
+                    let param: PickSpecifiedNumCurrencyParam =
+                        match serde_json::from_value(msg.args) {
+                            Ok(param) => param,
+                            Err(_) => return Err(EwfError::CallParamValidFaild),
+                        };
+                    json!(Self::pick_specified_num_currency(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "unlock_currency" => {
+                    let param: UnLockCurrencyParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::pick_specified_num_currency(&db_conn, &param)
+                    json!(Self::unlock_currency(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
+                }
+                "deposit" => {
+                    let param: CurrencyDepositParam = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::deposit(&db_conn, &param)
+                        .await
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 _ => return Err(EwfError::MethodNotFoundError),

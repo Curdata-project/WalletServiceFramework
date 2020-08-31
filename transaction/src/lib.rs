@@ -471,8 +471,7 @@ impl Handler<RecvMsgPackageByTxConn> for TransactionModule {
                         txid: params.msg.txid.clone(),
                         uid: params.recv_uid.clone(),
                     })
-                    .await?
-                    .map_err(|err| err)?;
+                    .await??;
 
                 let tx_sm_id = payload.tx_sm_id.clone();
 
@@ -645,7 +644,7 @@ async fn recv_paymentplansyn(
     msg_data: Value,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
-    let recv = TransactionContextSyn::from_msgpack(msg_data).map_err(|err| err)?;
+    let recv = TransactionContextSyn::from_msgpack(msg_data)?;
 
     let now = Local::now().timestamp_millis();
     if now - recv.timestamp > MAX_TRANSACTION_CLOCK_SKEW_MS {
@@ -695,14 +694,13 @@ async fn recv_paymentplansyn(
 
     tx_payload_addr
         .send(MemFnTXSetPaymentPlan {
-            txid: payload.txid.clone(),
-            uid: payload.uid.clone(),
+            txid: payload.txid,
+            uid: payload.uid,
             oppo_uid: oppo_exchanger.uid.clone(),
             self_exchanger: Some(self_exchanger),
             other_exchangers: Some(vec![oppo_exchanger.clone()]),
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
     Ok(())
 }
 
@@ -739,7 +737,7 @@ async fn recv_paymentplanack(
     msg_data: Value,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
-    let recv = TransactionContextAck::from_msgpack(msg_data).map_err(|err| err)?;
+    let recv = TransactionContextAck::from_msgpack(msg_data)?;
 
     // 存储对方user信息
     // 双方交易流程中，收到的数组唯一元素就是对手方
@@ -760,8 +758,7 @@ async fn recv_paymentplanack(
             self_exchanger: None,
             other_exchangers: Some(vec![oppo_exchanger.clone()]),
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
 
     // 存储对方user信息
     call_mod_througth_bus!(
@@ -772,7 +769,10 @@ async fn recv_paymentplanack(
             uid: oppo_exchanger.uid.clone(),
             cert: oppo_exchanger.cert.clone(),
             last_tx_time: Local::now().timestamp_millis(),
-            account: oppo_exchanger.addition["account"].to_string(),
+            account: oppo_exchanger.addition["account"]
+                .as_str()
+                .unwrap()
+                .to_string(),
         })
     );
 
@@ -820,27 +820,20 @@ async fn send_currency_stat(
     Ok(())
 }
 
-// async fn recv_paymentplanack_when_paymentplan_done(tx_payload_addr: Addr<TXPayloadMgr>, bus_addr: Addr<Bus>, msg_data: Value, payload: TransactionPayload) -> Result<(), EwfError> {
-//     transition!(bus_addr, payload.tx_sm_id, "RecvPaymentPlanAck");
-
-//     Ok(())
-// }
-
 async fn recv_currencystat(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
     msg_data: Value,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
-    let recv = CurrencyStat::from_msgpack(msg_data).map_err(|err| err)?;
+    let recv = CurrencyStat::from_msgpack(msg_data)?;
 
     tx_payload_addr
         .send(MemFnTXSetPayCurrencyStat {
             tx_sm_id: payload.tx_sm_id,
             currency_stat: recv,
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
 
     Ok(())
 }
@@ -907,8 +900,7 @@ async fn compute_plan(
                 },
             ],
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
 
     if currency_plan.recv_amount != 0 {
         return Ok(true);
@@ -954,7 +946,7 @@ async fn recv_currency_plan(
     msg_data: Value,
     payload: TransactionPayload,
 ) -> Result<bool, Error> {
-    let recv = CurrencyPlan::from_msgpack(msg_data).map_err(|err| err)?;
+    let recv = CurrencyPlan::from_msgpack(msg_data)?;
 
     let mut iter = recv.peer_plans.iter();
     let user_plan = loop {
@@ -972,8 +964,7 @@ async fn recv_currency_plan(
             tx_sm_id: payload.tx_sm_id,
             peer_plan: recv.peer_plans,
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
 
     // 按照收款方指定的支付方案，看是否需要兑零
     // TODO 支付方兑零
@@ -1042,8 +1033,7 @@ async fn send_transaction_syn(
             tx_sm_id: payload.tx_sm_id,
             ids: pay_lock_ids,
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
 
     // 对手方
     let oppo_exchanger = &payload.other_exchangers[0];
@@ -1091,15 +1081,14 @@ async fn recv_transaction_syn(
     msg_data: Value,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
-    let recv = TransactionSyn::from_msgpack(msg_data).map_err(|err| err)?;
+    let recv = TransactionSyn::from_msgpack(msg_data)?;
 
     tx_payload_addr
         .send(MemFnTXSetRecvWaitConfirmCurrencys {
             tx_sm_id: payload.tx_sm_id,
             currencys: recv.tx_datas,
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
 
     Ok(())
 }
@@ -1157,8 +1146,7 @@ async fn recv_transaction_confirm(
         .send(MemFnTXTransactionConfirm {
             tx_sm_id: payload.tx_sm_id,
         })
-        .await?
-        .map_err(|err| err)?;
+        .await??;
 
     Ok(())
 }
@@ -1173,8 +1161,8 @@ async fn end_transaction(
         "transaction",
         "tx_success",
         json!(TXSuccessParam {
-            txid: payload.txid.clone(),
-            uid: payload.uid.clone(),
+            txid: payload.txid,
+            uid: payload.uid,
         })
     );
 

@@ -222,6 +222,7 @@ impl ComputeCurrencyPlanB {
                 stuff.push((item.value * tmp_num, item.value));
                 last_num -= tmp_num;
             } else {
+                stuff.push((item.value * last_num, item.value));
                 break;
             }
             tmp_num *= 2;

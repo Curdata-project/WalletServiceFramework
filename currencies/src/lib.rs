@@ -573,7 +573,7 @@ impl CurrenciesModule {
     /// 提现
     /// 异常信息
     ///     HttpError(...) 网络请求失败
-    ///     WithdrawError(...) 注册请求失败
+    ///     WithdrawError(...) 提现失败
     async fn withdraw(
         db_conn: &SqliteConnection,
         param: &CurrencyWithdrawParam,
@@ -585,7 +585,7 @@ impl CurrenciesModule {
     /// 兑换
     /// 异常信息
     ///     HttpError(...) 网络请求失败
-    ///     ConvertError(...) 注册请求失败
+    ///     ConvertError(...) 兑换失败
     async fn convert(
         db_conn: &SqliteConnection,
         param: &CurrencyConvertParam,

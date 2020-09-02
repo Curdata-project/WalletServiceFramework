@@ -48,3 +48,22 @@ pub struct RecvMsgPackage {
     pub msg: MsgPackage,
     pub recv_uid: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddUdpRouteInfo {
+    pub uid: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishUdpRouteInfo {
+    pub uid: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UdpWrapPackage {
+    pub msg: MsgPackage,
+    pub ord_id: u32,
+}
+

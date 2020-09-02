@@ -88,7 +88,7 @@ pub enum AddCurrencyParam {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfirmCurrencyParam {
     pub owner_uid: String,
-    pub currency: DigitalCurrencyWrapper,
+    pub currency_str: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,32 +143,23 @@ pub struct UnLockCurrencyParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CurrencyDepositInfo {
-    pub uid: String,
-    pub cert: String,
-    pub bank_num: String,
-    pub amount: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrencyDepositParam {
-    pub url: String,
-    pub timeout: u64,
-    pub info: CurrencyDepositInfo,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CurrencyWithdrawInfo {
     pub uid: String,
     pub bank_num: String,
     pub amount: u64,
+    pub currencys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrencyWithdrawParam {
-    pub url: String,
-    pub timeout: u64,
-    pub info: CurrencyWithdrawInfo,
+    pub uid: String,
+    pub bank_num: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyWithdrawResult {
+    pub currencys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

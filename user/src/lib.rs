@@ -185,7 +185,10 @@ impl UserModule {
             .limit(query_param.page_items as i64)
             .offset((query_param.page_items * (query_param.page_num - 1)) as i64)
             .load::<UserStore>(db_conn)
-            .map_err(|_| Error::UserByidNotFound)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseSelectError
+            })?;
 
         let mut rets = Vec::<UserEntity>::new();
         for user in users {

@@ -363,7 +363,7 @@ impl Handler<Call> for SecretModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
 
-                    let new_secret = Self::gen_and_register(&db_conn, param)
+                    let new_secret = Self::gen_and_register(&db_conn, param.clone())
                         .await
                         .map_err(|err| err.to_ewf_error())?;
 
@@ -371,7 +371,7 @@ impl Handler<Call> for SecretModule {
                         uid: new_secret.uid.clone(),
                         cert: Self::cert_to_string(&new_secret.cert),
                         last_tx_time: 0,
-                        account: new_secret.uid,
+                        account: param.info.account,
                     };
 
                     call_mod_througth_bus!(bus_addr, "user", "add_user", json!(new_user));

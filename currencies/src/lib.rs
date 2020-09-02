@@ -175,8 +175,11 @@ impl CurrenciesModule {
     ///     CurrencyConfirmError 货币不存在或重复确认导致失败
     fn confirm_currency(
         db_conn: &SqliteConnection,
-        currency: &DigitalCurrencyWrapper,
+        param:ConfirmCurrencyParam,
     ) -> Result<(), Error> {
+        let b_currency = Vec::<u8>::from_hex(&param.currency_str).unwrap();
+        let currency = DigitalCurrencyWrapper::from_bytes(&b_currency).unwrap();
+
         let quota_id = currency
             .get_body()
             .get_quota_info()
@@ -184,15 +187,14 @@ impl CurrenciesModule {
             .get_id()
             .encode_hex::<String>();
 
-        let currency_str = currency.to_bytes().encode_hex::<String>();
-
         let affect_rows = diesel::update(
             currency_store
                 .find(quota_id)
+                .filter(dsl::owner_uid.eq(param.owner_uid))
                 .filter(dsl::status.eq(CurrencyStatus::WaitConfirm.to_int())),
         )
         .set((
-            dsl::currency.eq(currency_str),
+            dsl::currency.eq(param.currency_str),
             dsl::status.eq(CurrencyStatus::Avail.to_int()),
         ))
         .execute(db_conn)
@@ -208,7 +210,6 @@ impl CurrenciesModule {
     /// 添加货币到模块
     ///     传入（货币，交易ID，交易对手方ID）
     /// 异常信息
-    ///     DatabaseInsertError 货币已存在
     ///     CurrencyParamInvalid 输入货币未通过校验
     fn add_currency(db_conn: &SqliteConnection, entity: &AddCurrencyParam) -> Result<(), Error> {
         let (quota_id, owner_uid, value, currency_str, txid, last_owner_id, status) = match entity {
@@ -500,8 +501,9 @@ impl CurrenciesModule {
         db_conn: &SqliteConnection,
         param: &UnLockCurrencyParam,
     ) -> Result<(), Error> {
+        let mut has_error=false;
         for id in &param.ids {
-            diesel::update(
+            let updated_row = diesel::update(
                 currency_store
                     .filter(dsl::id.eq(id))
                     .filter(dsl::status.eq(CurrencyStatus::Lock.to_int())),
@@ -509,6 +511,14 @@ impl CurrenciesModule {
             .set(dsl::status.eq(CurrencyStatus::Avail.to_int()))
             .execute(db_conn)
             .map_err(|_| Error::CurrencyUnlockError)?;
+
+            if updated_row == 0{
+                log::error!("currencies.unlock_currency error when id={}", id);
+                has_error=true;
+            }
+        }
+        if has_error{
+            return Err(Error::CurrencyUnlockError);
         }
         Ok(())
     }
@@ -516,79 +526,31 @@ impl CurrenciesModule {
     /// 模块对外接口
     /// 充值
     /// 异常信息
-    ///     HttpError(...) 网络请求失败
-    ///     RegisterError(...) 注册请求失败
     async fn deposit(
         db_conn: &SqliteConnection,
-        param: &CurrencyDepositParam,
+        param: CurrencyDepositParam,
     ) -> Result<(), Error> {
-        match reqwest_json(
-            &param.url,
-            json!(CurrencyDepositRequest {
-                bank_num: param.info.bank_num.clone(),
-                amount: param.info.amount,
-                target: param.info.cert.clone(),
-            }),
-            param.timeout,
-        )
-        .await
-        {
-            Err(err) => return Err(Error::HttpError(err)),
-            Ok(resp) => {
-                if resp["code"] == json!(0) {
-                    let reg_resp: CurrencyDepositResponse =
-                        serde_json::from_value(resp["data"].clone())
-                            .map_err(|_| Error::DepositResponseInvaild)?;
-
-                    for currency in reg_resp.0 {
-                        Self::add_currency(
-                            db_conn,
-                            &AddCurrencyParam::AvailEntity {
-                                owner_uid: param.info.uid.clone(),
-                                currency_str: currency,
-                                txid: "".to_string(),
-                                last_owner_id: "".to_string(),
-                            },
-                        )?;
-                    }
-
-                    Ok(())
-                } else {
-                    log::warn!(
-                        "response from {} err_code {}: message {}",
-                        param.url,
-                        resp["code"],
-                        resp["message"]
-                    );
-                    Err(Error::DepositError(format!(
-                        "{}, {}",
-                        resp["code"], resp["message"]
-                    )))
-                }
-            }
+        for currency in param.currencys {
+            Self::add_currency(
+                db_conn,
+                &AddCurrencyParam::AvailEntity {
+                    owner_uid: param.uid.clone(),
+                    currency_str: currency,
+                    txid: "bank".to_string(),
+                    last_owner_id: "bank".to_string(),
+                },
+            )?;
         }
+
+        Ok(())
     }
 
     /// 模块对外接口
     /// 提现
     /// 异常信息
-    ///     HttpError(...) 网络请求失败
-    ///     WithdrawError(...) 提现失败
     async fn withdraw(
         db_conn: &SqliteConnection,
         param: &CurrencyWithdrawParam,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// 模块对外接口
-    /// 兑换
-    /// 异常信息
-    ///     HttpError(...) 网络请求失败
-    ///     ConvertError(...) 兑换失败
-    async fn convert(
-        db_conn: &SqliteConnection,
-        param: &CurrencyConvertParam,
     ) -> Result<(), Error> {
         Ok(())
     }
@@ -627,7 +589,7 @@ impl Handler<Call> for CurrenciesModule {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::confirm_currency(&db_conn, &param.currency)
+                    json!(Self::confirm_currency(&db_conn, param)
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 "add_currency" => {
@@ -691,7 +653,7 @@ impl Handler<Call> for CurrenciesModule {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::deposit(&db_conn, &param)
+                    json!(Self::deposit(&db_conn, param)
                         .await
                         .map_err(|err| err.to_ewf_error())?)
                 }

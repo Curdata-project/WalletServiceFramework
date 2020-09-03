@@ -7,7 +7,6 @@
 - [Overview](#Overview)
 - [Design](#Design)
   - [Documents](#Documents)
-  - [RFC](#RFC)
   - [Related Project](#Related-project)
 - [State of project](#state-of-project)
 - [License](#License)
@@ -24,7 +23,7 @@ EWF的技术架构图如下：
 
 ### Documents
 
-- [Documents](#Whitepaper): 描述了`EWF` 使用相关的文档。
+- [Documents](./docs): 描述了`EWF` 使用相关的文档。
 - [RFCs](https://github.com/Curdata-project/Curdata/tree/master/rfcs): 描述了`EWF` 及其相关系统的设计。
 
 ### Related-project

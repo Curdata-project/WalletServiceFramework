@@ -162,9 +162,10 @@ impl CurrenciesModule {
                 Error::DatabaseDeleteError
             })?;
 
-        if affect_rows != 1 {
-            return Err(Error::DatabaseDeleteError);
-        }
+        // 有可能同库两账户互转，状态刚由可用变为待见证
+        // if affect_rows != 1 {
+        //     return Err(Error::DatabaseDeleteError);
+        // }
         Ok(())
     }
 

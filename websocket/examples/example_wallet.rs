@@ -8,7 +8,7 @@ use history::HistoryModule;
 use prepare::PrepareModule;
 use secret::SecretModule;
 use transaction::TransactionModule;
-use tx_conn_local::TXConnModule;
+use tx_conn_udp::TXConnModule;
 use user::UserModule;
 use websocket::WebSocketModule;
 

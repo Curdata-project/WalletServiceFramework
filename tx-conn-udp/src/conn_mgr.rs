@@ -3,25 +3,19 @@ use crate::TXConnModule;
 use actix::prelude::*;
 use chrono::prelude::Local;
 use ewf_core::message::Call;
-use futures_util::{SinkExt, StreamExt};
-use serde_json::json;
-use serde_json::Value;
-use std::collections::hash_map::HashMap;
-use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage};
-use tokio::net::udp::{SendHalf, RecvHalf};
-use std::collections::BinaryHeap;
-use tokio::net::UdpSocket;
-use futures_util::stream::{SplitSink, SplitStream};
-use tokio::net::{TcpListener, TcpStream};
-use serde::{Serialize, Deserialize};
-use std::cmp::Ordering;
-use std::net::SocketAddr;
-use wallet_common::transaction::TXCloseRequest;
-use futures_util::future::FutureExt;
 use futures_channel::mpsc;
-use futures::executor::block_on_stream;
-use futures::stream::FusedStream;
-
+use futures_util::future::FutureExt;
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::cmp::Ordering;
+use std::collections::hash_map::HashMap;
+use std::collections::BinaryHeap;
+use std::net::SocketAddr;
+use tokio::net::udp::{RecvHalf, SendHalf};
+use tokio::net::UdpSocket;
+use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage};
+use wallet_common::transaction::TXCloseRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrdMsgPackage {
@@ -51,13 +45,13 @@ impl Ord for OrdMsgPackage {
 }
 
 #[derive(Debug, Clone)]
-struct SendOrdMsgPackage{
+struct SendOrdMsgPackage {
     data: OrdMsgPackage,
     addr: SocketAddr,
 }
 
 #[derive(Debug, Clone)]
-enum WaitLoopSignal{
+enum WaitLoopSignal {
     TimeoutCheck,
     // txid
     CloseConn(String),
@@ -84,7 +78,7 @@ struct ConnectObj {
 pub(crate) struct ConnMgr {
     // uid -> listen
     uid_listen: HashMap<String, ListenObj>,
-    
+
     // txid -> (uid -> conn)
     conn_map: HashMap<String, HashMap<String, ConnectObj>>,
 
@@ -119,35 +113,32 @@ impl ConnMgr {
 
         let (receiver, sender) = udp_socket.split();
 
-        self.uid_listen.insert(uid.clone(), ListenObj{
-            uid,
-            peer_url: peer_addr,
-            listen_handle: None,
-            waitloop_sender: None,
-        });
-        
+        self.uid_listen.insert(
+            uid.clone(),
+            ListenObj {
+                uid,
+                peer_url: peer_addr,
+                listen_handle: None,
+                waitloop_sender: None,
+            },
+        );
+
         Some((receiver, sender))
     }
 
     fn connect(&mut self, self_uid: String, peer_uid: String, txid: String) -> Result<(), Error> {
-        let listen_obj = self
-            .uid_listen
-            .get_mut(&self_uid)
-            .ok_or(Error::TXConnectError)?;
-
-        let oppo_url = self.uid_url.get(&peer_uid).ok_or(Error::TXRouteInfoNotFound)?.clone();
-
-        let conn_obj = ConnectObj{
+        let conn_obj = ConnectObj {
             uid: self_uid.clone(),
             oppo_uid: peer_uid,
             last_send_id: 0,
         };
 
         if self.conn_map.get(&txid).is_none() {
-            self.conn_map.insert(txid.clone(), HashMap::<String, ConnectObj>::new());
+            self.conn_map
+                .insert(txid.clone(), HashMap::<String, ConnectObj>::new());
         }
 
-        let mut conn_objs = self.conn_map.get_mut(&txid).unwrap();
+        let conn_objs = self.conn_map.get_mut(&txid).unwrap();
 
         conn_objs.insert(self_uid, conn_obj);
 
@@ -157,22 +148,22 @@ impl ConnMgr {
     fn close_conn(&mut self, uid: String, txid: String) {
         // 关闭读端
         if let Some(listen_obj) = self.uid_listen.get_mut(&uid) {
-            if let Some(mut sender) = listen_obj.waitloop_sender.clone(){
-                sender.try_send(WaitLoopSignal::CloseConn(txid.clone())).unwrap();
+            if let Some(mut sender) = listen_obj.waitloop_sender.clone() {
+                sender
+                    .try_send(WaitLoopSignal::CloseConn(txid.clone()))
+                    .unwrap();
             }
         }
-        let is_none: bool = if let Some(conn_objs) = self.conn_map.get_mut(&txid){
+        let is_none: bool = if let Some(conn_objs) = self.conn_map.get_mut(&txid) {
             // 关闭写端
             conn_objs.remove(&uid);
 
             conn_objs.len() == 0
-        }
-        else{
+        } else {
             false
         };
 
-
-        if is_none{
+        if is_none {
             self.conn_map.remove(&txid);
         }
     }
@@ -180,16 +171,15 @@ impl ConnMgr {
     // 服务端口断开，不关注客户端连接，客户端连接通过超时来关
     fn close_bind(&mut self, uid: String) -> Option<SpawnHandle> {
         let ret = if let Some(listen_obj) = self.uid_listen.remove(&uid) {
-            if let Some(mut sender) = listen_obj.waitloop_sender{
+            if let Some(mut sender) = listen_obj.waitloop_sender {
                 sender.try_send(WaitLoopSignal::Close).unwrap();
             }
             listen_obj.listen_handle
-        }
-        else{
+        } else {
             None
         };
-        
-        for (txid, mut uid_conn) in &mut self.conn_map {
+
+        for (txid, uid_conn) in &mut self.conn_map {
             uid_conn.remove(&uid);
         }
 
@@ -326,7 +316,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                                 Ok(ord_msg) => ord_msg,
                                 Err(_) => continue,
                             };
-        
+
                             let wait_ordmsg_obj = if ord_msg.ord_id == 0 {
                                 let mut heap = BinaryHeap::<OrdMsgPackage>::new();
                                 heap.push(ord_msg.clone());
@@ -359,7 +349,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
 
                                 wait_ordmsg_obj
                             };
-        
+
                             // 排队取出
                             while let Some(min_ord_msg) = wait_ordmsg_obj.heap.peek(){
                                 if wait_ordmsg_obj.wait_ord_id != min_ord_msg.ord_id {
@@ -380,7 +370,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                                 .await
                                 .unwrap()
                                 .unwrap();
-    
+
                                 wait_ordmsg_obj.wait_ord_id +=1;
                             }
                             wait_ordmsg_obj.last_ord_time = Local::now().timestamp_millis();
@@ -494,30 +484,29 @@ impl Handler<MemFnOnConnNotifyParam> for ConnMgr {
         let conn_addr = self.conn_addr.clone();
 
         let is_on_conn = match self.conn_map.get(&param.txid) {
-            Some(conn_objs) => {
-                match conn_objs.get(&param.uid) {
-                    Some(_) => false,
-                    None => true,
-                }
+            Some(conn_objs) => match conn_objs.get(&param.uid) {
+                Some(_) => false,
+                None => true,
             },
             None => true,
         };
 
         if is_on_conn {
             if self.conn_map.get(&param.txid).is_none() {
-                self.conn_map.insert(param.txid.clone(), HashMap::<String, ConnectObj>::new());
+                self.conn_map
+                    .insert(param.txid.clone(), HashMap::<String, ConnectObj>::new());
             }
-    
+
             let conn_objs = self.conn_map.get_mut(&param.txid).unwrap();
 
-            let conn_obj = ConnectObj{
+            let conn_obj = ConnectObj {
                 uid: param.uid.clone(),
                 oppo_uid: param.oppo_peer_uid.clone(),
                 last_send_id: 0,
             };
-    
+
             conn_objs.insert(param.uid.clone(), conn_obj);
-            
+
             conn_addr.do_send(Call {
                 method: "on_connect".to_string(),
                 args: json!(OnConnectNotify {
@@ -536,11 +525,9 @@ impl Handler<MemFnSendParam> for ConnMgr {
     type Result = Result<(), Error>;
     fn handle(&mut self, param: MemFnSendParam, _ctx: &mut Context<Self>) -> Self::Result {
         let mut conn_obj = match self.conn_map.get_mut(&param.txid) {
-            Some(conn_objs) => {
-                match conn_objs.get_mut(&param.send_uid) {
-                    Some(conn_obj) => conn_obj,
-                    None => return Err(Error::TXConnectBroken),
-                }
+            Some(conn_objs) => match conn_objs.get_mut(&param.send_uid) {
+                Some(conn_obj) => conn_obj,
+                None => return Err(Error::TXConnectBroken),
             },
             None => return Err(Error::TXConnectBroken),
         };
@@ -551,11 +538,9 @@ impl Handler<MemFnSendParam> for ConnMgr {
         };
 
         let oppo_addr = match self.uid_url.get(&conn_obj.oppo_uid) {
-            Some(oppo_url) => {
-                match oppo_url.parse() {
-                    Ok(oppo_addr) => oppo_addr,
-                    Err(_) => return Err(Error::TXConnectUrlUnvalid),
-                }
+            Some(oppo_url) => match oppo_url.parse() {
+                Ok(oppo_addr) => oppo_addr,
+                Err(_) => return Err(Error::TXConnectUrlUnvalid),
             },
             None => return Err(Error::TXConnectBroken),
         };
@@ -563,15 +548,17 @@ impl Handler<MemFnSendParam> for ConnMgr {
         let cur_send_id = conn_obj.last_send_id;
         conn_obj.last_send_id += 1;
 
-        if let Some(mut sender) = listen_obj.waitloop_sender.clone(){
-            sender.try_send(WaitLoopSignal::SendData(SendOrdMsgPackage{
-                data: OrdMsgPackage{
-                    txid: param.txid,
-                    ord_id: cur_send_id,
-                    data: param.data,
-                },
-                addr: oppo_addr,
-            })).unwrap();
+        if let Some(mut sender) = listen_obj.waitloop_sender.clone() {
+            sender
+                .try_send(WaitLoopSignal::SendData(SendOrdMsgPackage {
+                    data: OrdMsgPackage {
+                        txid: param.txid,
+                        ord_id: cur_send_id,
+                        data: param.data,
+                    },
+                    addr: oppo_addr,
+                }))
+                .unwrap();
         }
 
         Ok(())

@@ -47,6 +47,7 @@ use wallet_common::transaction::{
 };
 use wallet_common::user::UserEntity;
 use wallet_common::WALLET_SM_CODE;
+use wallet_common::connect::TransactionType;
 
 /// 交易时钟最大允许偏差 ms
 const MAX_TRANSACTION_CLOCK_SKEW_MS: i64 = 30000;
@@ -240,7 +241,7 @@ impl Handler<Call> for TransactionModule {
                         bus_addr,
                         "tx_conn",
                         "close_conn",
-                        json!(CloseConnectRequest { txid: params.txid })
+                        json!(CloseConnectRequest { uid: params.uid, txid: params.txid })
                     );
 
                     Ok(Value::Null)
@@ -280,7 +281,7 @@ impl Handler<Call> for TransactionModule {
                         bus_addr,
                         "tx_conn",
                         "close_conn",
-                        json!(CloseConnectRequest { txid: params.txid })
+                        json!(CloseConnectRequest { uid: params.uid, txid: params.txid })
                     );
 
                     Ok(Value::Null)
@@ -475,6 +476,8 @@ impl Handler<RecvMsgPackageByTxConn> for TransactionModule {
 
                 let tx_sm_id = payload.tx_sm_id.clone();
 
+                log::error!("{} recv {}", params.recv_uid.clone(), tx_msgtype);
+
                 match tx_msgtype {
                     "TransactionContextSyn" => {
                         recv_paymentplansyn(
@@ -483,11 +486,7 @@ impl Handler<RecvMsgPackageByTxConn> for TransactionModule {
                             params.msg.data,
                             payload,
                         )
-                        .await
-                        .map_err(|err| {
-                            log::info!("{:?}", err);
-                            err
-                        })?;
+                        .await?;
 
                         Ok(transition!(bus_addr, tx_sm_id, "RecvPaymentPlanSyn"))
                     }
@@ -575,14 +574,12 @@ impl Handler<RecvMsgPackageByTxConn> for TransactionModule {
         Box::pin(async move {
             let txid = params.msg.txid.clone();
             let uid = params.recv_uid.clone();
-            // 此处复制主要为了log错误输出~~~
-            let msg_data = params.msg.data.clone();
 
             let ret = dispatch_tx_msg_task(params).await;
             match ret {
                 Ok(_) => {}
                 Err(err) => {
-                    log::error!("dispatch_tx_msg_task => {:?}, msg: {}", err, msg_data);
+                    log::error!("dispatch_tx_msg_task => {:?}", err);
                     self_addr.do_send(ewf_core::Call {
                         method: "tx_close".to_string(),
                         args: json!(TXCloseRequest {
@@ -622,6 +619,7 @@ async fn send_transaction_context_syn(
         timestamp: Local::now().timestamp_millis(),
         exchangers: vec![payload.self_exchanger.unwrap()],
     };
+
     call_mod_througth_bus!(
         bus_addr,
         "tx_conn",
@@ -641,7 +639,7 @@ async fn send_transaction_context_syn(
 async fn recv_paymentplansyn(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
-    msg_data: Value,
+    msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
     let recv = TransactionContextSyn::from_msgpack(msg_data)?;
@@ -734,7 +732,7 @@ async fn send_paymentplanack(
 async fn recv_paymentplanack(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
-    msg_data: Value,
+    msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
     let recv = TransactionContextAck::from_msgpack(msg_data)?;
@@ -823,7 +821,7 @@ async fn send_currency_stat(
 async fn recv_currencystat(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
-    msg_data: Value,
+    msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
     let recv = CurrencyStat::from_msgpack(msg_data)?;
@@ -943,7 +941,7 @@ async fn send_currency_plan(
 async fn recv_currency_plan(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
-    msg_data: Value,
+    msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<bool, Error> {
     let recv = CurrencyPlan::from_msgpack(msg_data)?;
@@ -1078,7 +1076,7 @@ async fn send_transaction_syn(
 async fn recv_transaction_syn(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
-    msg_data: Value,
+    msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
     let recv = TransactionSyn::from_msgpack(msg_data)?;
@@ -1116,7 +1114,7 @@ async fn send_transaction_confirm(
 async fn recv_transaction_confirm(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
-    msg_data: Value,
+    msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
     for each in payload.recv_wait_confirm_currencys {

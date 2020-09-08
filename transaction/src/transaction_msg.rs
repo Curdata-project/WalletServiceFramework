@@ -5,26 +5,37 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wallet_common::currencies::StatisticsItem;
 use wallet_common::transaction::TransactionExchangerItem;
+use wallet_common::connect::TransactionType;
 
-pub fn get_msgtype(pack: &Value) -> String {
-    if pack["txmsgtype"] != Value::Null {
-        return pack["txmsgtype"].as_str().unwrap().to_string();
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MsgWrapper{
+    txmsgtype: String,
+    data: Vec<u8>,
+}
+
+pub fn get_msgtype(pack: &TransactionType) -> String {
+    if let Ok(msg) = bincode::deserialize::<MsgWrapper>(pack) {
+        msg.txmsgtype
     }
-    "".to_string()
+    else{
+        "".to_string()
+    }
 }
 
 pub trait TXMsgPackageData: Sized + Serialize + for<'de> Deserialize<'de> {
-    fn to_msgpack(self) -> Value {
-        json!({
-            "txmsgtype": Self::get_msgtype(),
-            "data": self,
-        })
+    fn to_msgpack(self) -> TransactionType {
+        bincode::serialize(&MsgWrapper{
+            txmsgtype: Self::get_msgtype(),
+            data: bincode::serialize(&self).unwrap(),
+        }).unwrap()
     }
 
-    fn from_msgpack(mut pack: Value) -> Result<Self, Error> {
-        match serde_json::from_value(pack["data"].take()) {
-            Ok(ans) => Ok(ans),
-            Err(_) => Err(Error::TXMsgPackBroken),
+    fn from_msgpack(pack: TransactionType) -> Result<Self, Error> {
+        if let Ok(msg) = bincode::deserialize::<MsgWrapper>(&pack) {
+            bincode::deserialize(&msg.data).map_err(|_| Error::TXMsgPackBroken)
+        }
+        else{
+            Err(Error::TXMsgPackBroken)
         }
     }
 

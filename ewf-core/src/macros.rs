@@ -62,9 +62,9 @@ macro_rules! sync_parse_check {
 #[macro_export]
 macro_rules! transition {
     ($bus_addr: ident, $tx_sm_id: expr, $action: expr) => {
-        $bus_addr.do_send(ewf_core::Transition {
+        $bus_addr.send(ewf_core::Transition {
             id: $tx_sm_id,
             transition: $action.to_string(),
-        })
+        }).await??
     };
 }

@@ -182,7 +182,9 @@ impl Handler<Call> for TransactionModule {
                         ctx.notify(Call {
                             method: "tx_close".to_string(),
                             args: json!(TXCloseRequest {
-                                txid: pay_load.txid.clone()
+                                uid: pay_load.uid.clone(),
+                                txid: pay_load.txid.clone(),
+                                reason: "timeout".to_string(),
                             }),
                         });
                     }
@@ -205,7 +207,7 @@ impl Handler<Call> for TransactionModule {
                         bus_addr,
                         "tx_conn",
                         "connect",
-                        json!(CloseConnectRequest { txid: params.txid })
+                        json!(CloseConnectRequest { uid: params.uid, txid: params.txid })
                     );
 
                     Ok(Value::Null)

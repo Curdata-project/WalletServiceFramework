@@ -1,4 +1,5 @@
 use crate::currencies::StatisticsItem;
+use crate::serde_comm::{deserialize_value, serialize_value};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -29,6 +30,10 @@ pub struct TransactionExchangerItem {
     pub output: u64,
     pub input: u64,
     /// 预留字段
+    #[serde(
+        serialize_with = "serialize_value",
+        deserialize_with = "deserialize_value"
+    )]
     pub addition: Value,
 }
 

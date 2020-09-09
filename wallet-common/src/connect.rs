@@ -28,13 +28,16 @@ pub struct OnConnectNotify {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloseConnectRequest {
+    pub uid: String,
     pub txid: String,
 }
+
+pub type TransactionType = Vec<u8>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MsgPackage {
     pub txid: String,
-    pub data: Value,
+    pub data: TransactionType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

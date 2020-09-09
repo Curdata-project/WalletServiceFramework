@@ -5,8 +5,8 @@ use serde_json::{json, Value};
 use std::fmt;
 
 use actix::prelude::*;
+use ewf_core::async_parse_check;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{async_parse_check};
 use ewf_core::{Bus, Call, CallQuery, Event, Module, StartNotify};
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 

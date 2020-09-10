@@ -14,7 +14,7 @@ use std::collections::BinaryHeap;
 use std::net::SocketAddr;
 use tokio::net::udp::{RecvHalf, SendHalf};
 use tokio::net::UdpSocket;
-use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage};
+use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage, RouteInfo};
 use wallet_common::transaction::TXCloseRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,7 +179,7 @@ impl ConnMgr {
             None
         };
 
-        for (txid, uid_conn) in &mut self.conn_map {
+        for (_, uid_conn) in &mut self.conn_map {
             uid_conn.remove(&uid);
         }
 
@@ -267,6 +267,10 @@ pub(crate) struct MemFnSendParam {
     pub txid: String,
     pub data: Vec<u8>,
 }
+
+#[derive(Debug, Message, Clone)]
+#[rtype(result = "Result<Vec<RouteInfo>, Error>")]
+pub(crate) struct MemFnGetRouteInfosParam {}
 
 impl Handler<MemFnBindListenParam> for ConnMgr {
     type Result = ResponseActFuture<Self, Result<(), Error>>;
@@ -562,5 +566,21 @@ impl Handler<MemFnSendParam> for ConnMgr {
         }
 
         Ok(())
+    }
+}
+
+impl Handler<MemFnGetRouteInfosParam> for ConnMgr {
+    type Result = Result<Vec<RouteInfo>, Error>;
+    fn handle(&mut self, param: MemFnGetRouteInfosParam, _ctx: &mut Context<Self>) -> Self::Result {
+        let mut ret = Vec::<RouteInfo>::new();
+
+        for each in self.uid_listen.values() {
+            ret.push(RouteInfo {
+                uid: each.uid.clone(),
+                url: each.peer_url.clone(),
+            });
+        }
+
+        Ok(ret)
     }
 }

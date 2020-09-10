@@ -13,8 +13,8 @@ use ewf_core::{async_parse_check, call_mod_througth_bus, call_self};
 use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::json;
 use wallet_common::connect::{
-    AddUdpRouteInfo, BindTransPortParam, CloseBindTransPortParam, CloseConnectRequest,
-    ConnectRequest, OnConnectNotify, RecvMsgPackage, SendMsgPackage,
+    BindTransPortParam, CloseBindTransPortParam, CloseConnectRequest, ConnectRequest,
+    OnConnectNotify, RecvMsgPackage, RouteInfo, SendMsgPackage,
 };
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
@@ -166,7 +166,7 @@ impl Handler<Call> for TXConnModule {
                     Ok(Value::Null)
                 }
                 "add_route_info" => {
-                    let params: AddUdpRouteInfo =
+                    let params: RouteInfo =
                         async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
                     conn_mgr_addr
@@ -179,7 +179,14 @@ impl Handler<Call> for TXConnModule {
 
                     Ok(Value::Null)
                 }
-                "publish_route_info" => Ok(Value::Null),
+                "get_route_infos" => {
+                    let res = conn_mgr_addr
+                        .send(conn_mgr::MemFnGetRouteInfosParam {})
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
+
+                    Ok(json!(res))
+                }
                 "del_route_info" => Ok(Value::Null),
                 _ => Err(EwfError::MethodNotFoundError),
             }

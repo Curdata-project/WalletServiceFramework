@@ -406,7 +406,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                             }
                             Some(WaitLoopSignal::SendData(send_data)) => {
                                 let data = bincode::serialize(&send_data.data).unwrap();
-                                send_half.send_to(&data, &send_data.addr).await;
+                                send_half.send_to(&data, &send_data.addr).await.unwrap_or_default();
                             }
                             Some(WaitLoopSignal::CloseConn(txid)) => {
                                 ord_ids.remove(&txid);
@@ -571,7 +571,7 @@ impl Handler<MemFnSendParam> for ConnMgr {
 
 impl Handler<MemFnGetRouteInfosParam> for ConnMgr {
     type Result = Result<Vec<RouteInfo>, Error>;
-    fn handle(&mut self, param: MemFnGetRouteInfosParam, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _: MemFnGetRouteInfosParam, _ctx: &mut Context<Self>) -> Self::Result {
         let mut ret = Vec::<RouteInfo>::new();
 
         for each in self.uid_listen.values() {

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,13 +52,7 @@ pub struct RecvMsgPackage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddUdpRouteInfo {
-    pub uid: String,
-    pub url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublishUdpRouteInfo {
+pub struct RouteInfo {
     pub uid: String,
     pub url: String,
 }

@@ -7,7 +7,7 @@ use futures_channel::mpsc;
 use futures_util::future::FutureExt;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::hash_map::HashMap;
 use std::collections::BinaryHeap;
@@ -400,7 +400,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                         singal = signal_receiver.next().fuse() => match singal{
                             // TODO 读端超时检查，控制连接层超时
                             Some(WaitLoopSignal::TimeoutCheck) => {
-                                let update_time = Local::now().timestamp_millis() - 3000;
+                                let update_time = Local::now().timestamp_millis() - MAX_CLOSE_TIME_MS;
 
                                 let mut closes = Vec::<String>::new();
                                 for (k, v) in ord_ids.iter() {
@@ -408,7 +408,7 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                                         self_addr.send(MemFnCloseParam{
                                             uid: self_uid.clone(),
                                             txid: k.to_string(),
-                                        }).await;
+                                        }).await.unwrap_or_default();
 
                                         conn_addr.do_send(Call {
                                             method: "tx_close".to_string(),

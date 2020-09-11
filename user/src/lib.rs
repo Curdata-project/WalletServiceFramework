@@ -23,7 +23,7 @@ use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
 
-use ewf_core::{async_parse_check};
+use ewf_core::async_parse_check;
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 use wallet_common::user::UserEntity;
@@ -54,8 +54,10 @@ impl fmt::Debug for UserModule {
 impl UserModule {
     pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
-            pool: Pool::new(ConnectionManager::new(&path))
-                .map_err(|_| EwfError::ModuleInstanceError)?,
+            pool: Pool::new(ConnectionManager::new(&path)).map_err(|err| {
+                log::error!("{:?}", err);
+                EwfError::ModuleInstanceError
+            })?,
             bus_addr: None,
         })
     }
@@ -70,6 +72,7 @@ impl UserModule {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
+            log::error!("{:?}", err);
             return Err(Error::DatabaseInstallError);
         }
 
@@ -94,10 +97,13 @@ impl UserModule {
 
     /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_currency: &NewUserStore) -> Result<(), Error> {
-        let affect_rows = diesel::insert_into(user_store)
+        let affect_rows = diesel::replace_into(user_store)
             .values(new_currency)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -110,7 +116,10 @@ impl UserModule {
     fn delete(db_conn: &SqliteConnection, uid: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(user_store.find(uid))
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseDeleteError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseDeleteError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseDeleteError);
@@ -176,7 +185,10 @@ impl UserModule {
             .limit(query_param.page_items as i64)
             .offset((query_param.page_items * (query_param.page_num - 1)) as i64)
             .load::<UserStore>(db_conn)
-            .map_err(|_| Error::UserByidNotFound)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseSelectError
+            })?;
 
         let mut rets = Vec::<UserEntity>::new();
         for user in users {
@@ -241,7 +253,7 @@ impl Handler<Call> for UserModule {
                     };
                     json!(Self::query_user_comb(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
                 }
-                _ => return Ok(Value::Null),
+                _ => return Err(EwfError::MethodNotFoundError),
             };
             Ok(resp)
         })

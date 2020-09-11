@@ -56,3 +56,10 @@ pub struct RouteInfo {
     pub uid: String,
     pub url: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UdpWrapPackage {
+    pub msg: MsgPackage,
+    pub ord_id: u32,
+}
+

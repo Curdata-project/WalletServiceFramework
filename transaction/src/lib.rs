@@ -476,8 +476,6 @@ impl Handler<RecvMsgPackageByTxConn> for TransactionModule {
 
                 let tx_sm_id = payload.tx_sm_id.clone();
 
-                log::error!("{} recv {}", params.recv_uid.clone(), tx_msgtype);
-
                 match tx_msgtype {
                     "TransactionContextSyn" => {
                         recv_paymentplansyn(

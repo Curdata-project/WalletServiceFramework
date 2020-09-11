@@ -7,15 +7,19 @@ use futures_channel::mpsc;
 use futures_util::future::FutureExt;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::cmp::Ordering;
 use std::collections::hash_map::HashMap;
 use std::collections::BinaryHeap;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::udp::{RecvHalf, SendHalf};
 use tokio::net::UdpSocket;
 use wallet_common::connect::{MsgPackage, OnConnectNotify, RecvMsgPackage, RouteInfo};
 use wallet_common::transaction::TXCloseRequest;
+
+const CHECK_CLOSE_INTERVAL: u64 = 3;
+const MAX_CLOSE_TIME_MS: i64 = 3000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrdMsgPackage {
@@ -194,7 +198,21 @@ impl ConnMgr {
 impl Actor for ConnMgr {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Context<Self>) {}
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        fn conn_close_check_task(_self: &mut ConnMgr, ctx: &mut Context<ConnMgr>) {
+            for listen_obj in _self.uid_listen.values() {
+                if let Some(mut sender) = listen_obj.waitloop_sender.clone() {
+                    sender.try_send(WaitLoopSignal::TimeoutCheck).unwrap();
+                }
+            }
+        }
+
+        // 启动定时器关闭死链接
+        ctx.run_interval(
+            Duration::new(CHECK_CLOSE_INTERVAL, 0),
+            conn_close_check_task,
+        );
+    }
 }
 
 #[derive(Debug, Message, Clone)]
@@ -380,19 +398,24 @@ impl Handler<MemFnBindListenParam> for ConnMgr {
                             wait_ordmsg_obj.last_ord_time = Local::now().timestamp_millis();
                         },
                         singal = signal_receiver.next().fuse() => match singal{
-                            // TODO 读端超时检查，暂时没加信号发出检查定时器，transaction模块有应用层超时检测，此处先跳过
+                            // TODO 读端超时检查，控制连接层超时
                             Some(WaitLoopSignal::TimeoutCheck) => {
                                 let update_time = Local::now().timestamp_millis() - 3000;
 
                                 let mut closes = Vec::<String>::new();
                                 for (k, v) in ord_ids.iter() {
                                     if v.last_ord_time < update_time {
+                                        self_addr.send(MemFnCloseParam{
+                                            uid: self_uid.clone(),
+                                            txid: k.to_string(),
+                                        }).await;
+
                                         conn_addr.do_send(Call {
                                             method: "tx_close".to_string(),
                                             args: json!(TXCloseRequest {
                                                 txid: k.to_string(),
                                                 uid: self_uid.clone(),
-                                                reason: "timeout, close by timeout_signal_task".to_string(),
+                                                reason: "timeout, close by tx-conn-udp".to_string(),
                                             }),
                                         });
 

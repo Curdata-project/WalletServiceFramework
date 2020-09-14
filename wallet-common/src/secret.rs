@@ -1,6 +1,5 @@
-use common_structure::digital_currency::DigitalCurrencyWrapper;
-use common_structure::transaction::TransactionWrapper;
-use kv_object::sm2::{CertificateSm2, KeyPairSm2};
+use common_structure::transaction::Transaction;
+use kv_object::sm2::{CertificateSm2, KeyPairSm2, SignatureSm2};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,10 +49,11 @@ pub struct RegisterResponse {
 pub struct SignTransactionRequest {
     pub uid: String,
     pub oppo_cert: CertificateSm2,
-    pub datas: Vec<DigitalCurrencyWrapper>,
+    pub transaction: Transaction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignTransactionResponse {
-    pub datas: Vec<String>,
+    pub cert: CertificateSm2,
+    pub sig: SignatureSm2,
 }

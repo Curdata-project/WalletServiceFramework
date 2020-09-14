@@ -2,7 +2,7 @@ table! {
     currency_store (id) {
         id -> Text,
         owner_uid -> Text,
-        value -> BigInt,
+        amount -> BigInt,
         currency -> Text,
         txid -> Text,
         update_time -> Timestamp,

@@ -29,9 +29,6 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use std::fmt;
 
-use common_structure::transaction::{Transaction, TransactionWrapper};
-use kv_object::kv_object::MsgType;
-use kv_object::prelude::KValueObject;
 use wallet_common::http_cli::reqwest_json;
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
@@ -180,7 +177,7 @@ impl SecretModule {
                         uid: &reg_resp.uid,
                         secret_type: &"sm2",
                         seed: &seed,
-                        keypair: &"",
+                        keypair: &keypair.to_bytes().encode_hex_upper::<String>(),
                         cert: &reg_resp.cert,
                     };
                     Self::insert(&db_conn, &new_secret)?;
@@ -254,7 +251,10 @@ impl SecretModule {
                     uid: secret.uid,
                     secret_type: secret.secret_type,
                     keypair: KeyPairEntity::Sm2(
-                        KeyPairSm2::generate_from_seed(seed).expect("data incrrect"),
+                        KeyPairSm2::from_bytes(
+                            &Vec::<u8>::from_hex(&secret.cert).expect("data incrrect"),
+                        )
+                        .expect("data incrrect"),
                     ),
                     cert: CertificateEntity::Sm2(
                         CertificateSm2::from_bytes(
@@ -301,7 +301,7 @@ impl SecretModule {
     ///     
     fn sign_transaction(
         db_conn: &SqliteConnection,
-        query_param: &SignTransactionRequest,
+        query_param: SignTransactionRequest,
     ) -> Result<SignTransactionResponse, Error> {
         let user_secret = Self::get_secret(db_conn, &query_param.uid)?;
 
@@ -311,20 +311,15 @@ impl SecretModule {
 
         let mut rng = common_structure::get_rng_core();
 
-        let mut ret = Vec::<String>::new();
-        for each in &query_param.datas {
-            let mut transaction = TransactionWrapper::new(
-                MsgType::Transaction,
-                Transaction::new(query_param.oppo_cert.clone(), each.clone()),
-            );
-            transaction
-                .fill_kvhead(&user_keypair, &mut rng)
-                .map_err(|_| Error::SignTransactionError)?;
+        let new_sign = query_param
+            .transaction
+            .sign_by(&user_keypair, &mut rng)
+            .map_err(|_| Error::SignTransactionError)?;
 
-            ret.push(transaction.to_bytes().encode_hex::<String>());
-        }
-
-        Ok(SignTransactionResponse { datas: ret })
+        Ok(SignTransactionResponse {
+            cert: user_keypair.get_certificate(),
+            sig: new_sign,
+        })
     }
 }
 
@@ -401,8 +396,7 @@ impl Handler<Call> for SecretModule {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::sign_transaction(&db_conn, &param)
-                        .map_err(|err| err.to_ewf_error())?)
+                    json!(Self::sign_transaction(&db_conn, param).map_err(|err| err.to_ewf_error())?)
                 }
                 _ => return Err(EwfError::MethodNotFoundError),
             };

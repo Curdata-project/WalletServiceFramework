@@ -1,4 +1,3 @@
-use crate::currencies::StatisticsItem;
 use crate::serde_comm::{deserialize_value, serialize_value};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,12 +34,4 @@ pub struct TransactionExchangerItem {
         deserialize_with = "deserialize_value"
     )]
     pub addition: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CurrencyPlanItem {
-    pub pay_amount: u64,
-    pub pay_plan: Vec<StatisticsItem>,
-    pub recv_amount: u64,
-    pub recv_plan: Vec<StatisticsItem>,
 }

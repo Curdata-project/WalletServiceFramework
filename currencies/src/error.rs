@@ -19,6 +19,7 @@ pub enum Error {
     AvailCurrencyNotEnough,
     PickCurrencyError,
     CurrencyUnlockError,
+    WithDrawNotFitAmount,
 }
 
 impl Error {
@@ -60,6 +61,10 @@ impl Error {
             Error::CurrencyUnlockError => EwfError::JsonRpcError {
                 code: 2006i64,
                 msg: "解锁交易货币失败".to_string(),
+            },
+            Error::WithDrawNotFitAmount => EwfError::JsonRpcError {
+                code: 2007i64,
+                msg: "提现没有合适的货币组合".to_string(),
             },
         }
     }

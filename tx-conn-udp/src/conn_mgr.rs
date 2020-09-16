@@ -199,7 +199,7 @@ impl Actor for ConnMgr {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
-        fn conn_close_check_task(_self: &mut ConnMgr, ctx: &mut Context<ConnMgr>) {
+        fn conn_close_check_task(_self: &mut ConnMgr, _ctx: &mut Context<ConnMgr>) {
             for listen_obj in _self.uid_listen.values() {
                 if let Some(mut sender) = listen_obj.waitloop_sender.clone() {
                     sender.try_send(WaitLoopSignal::TimeoutCheck).unwrap();

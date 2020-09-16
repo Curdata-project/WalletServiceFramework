@@ -48,7 +48,6 @@ pub struct RegisterResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignTransactionRequest {
     pub uid: String,
-    pub oppo_cert: CertificateSm2,
     pub transaction: Transaction,
 }
 

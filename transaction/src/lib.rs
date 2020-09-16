@@ -1,6 +1,7 @@
 #![feature(async_closure)]
 mod error;
 mod transaction_msg;
+
 mod tx_algorithm;
 
 mod tx_payload_mgr;
@@ -14,13 +15,13 @@ use crate::transaction_msg::{
 };
 use crate::tx_payload_mgr::{
     MemFnTXPayloadGet, MemFnTXPayloadGetBySmid, MemFnTXPayloadMgrClose, MemFnTXPayloadMgrCreate,
-    MemFnTXPayloadMgrCreateResult, MemFnTXSetCurrencyPlan, MemFnTXSetPayCurrencyStat,
-    MemFnTXSetPayLockCurrencys, MemFnTXSetPaymentPlan, MemFnTXSetRecvWaitConfirmCurrencys,
-    MemFnTXTransactionConfirm, PeerCurrencyPlan, TXPayloadMgr, TransactionPayload,
+    MemFnTXPayloadMgrCreateResult, MemFnTXSetPayLockCurrencys, MemFnTXSetPaymentPlan,
+    MemFnTXSetWaitConfirmCurrencys, MemFnTXTransactionConfirm, TXPayloadMgr, TransactionPayload,
 };
 use actix::prelude::*;
 use chrono::prelude::Local;
 use common_structure::digital_currency::DigitalCurrencyWrapper;
+use common_structure::transaction::{Transaction, TransactionWrapper};
 use dislog_hal::Bytes;
 use ewf_core::error::Error as EwfError;
 use ewf_core::states::TransactionMachine;
@@ -30,24 +31,22 @@ use hex::{FromHex, ToHex};
 use kv_object::sm2::CertificateSm2;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tx_algorithm::ComputeCurrencyPlan;
+use wallet_common::connect::TransactionType;
 use wallet_common::connect::{
     CloseConnectRequest, ConnectRequest, MsgPackage, OnConnectNotify, RecvMsgPackage,
     SendMsgPackage,
 };
 use wallet_common::currencies::{
-    AddCurrencyParam, CurrencyEntity, PickSpecifiedNumCurrencyParam, QueryCurrencyStatisticsParam,
-    StatisticsItem, UnLockCurrencyParam,
+    CurrencyEntity, CurrencyEntityShort, QueryCurrencyStatisticsParam, UnLockCurrencyParam,
 };
-use wallet_common::prepare::{ModInitialParam, ModStatus};
+use wallet_common::history::{HistoryEntity, TransStatus, TransType};
+use wallet_common::prepare::ModStatus;
 use wallet_common::secret::{SignTransactionRequest, SignTransactionResponse};
-use wallet_common::transaction::CurrencyPlanItem;
 use wallet_common::transaction::{
     TXCloseRequest, TXSendRequest, TXSendResponse, TransactionExchangerItem,
 };
 use wallet_common::user::UserEntity;
 use wallet_common::WALLET_SM_CODE;
-use wallet_common::connect::TransactionType;
 
 /// 交易时钟最大允许偏差 ms
 const MAX_TRANSACTION_CLOCK_SKEW_MS: i64 = 30000;
@@ -95,12 +94,7 @@ impl Handler<Call> for TransactionModule {
         Box::pin(async move {
             let method: &str = &msg.method;
             match method {
-                "mod_initial" => {
-                    let params: ModInitialParam =
-                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
-
-                    Ok(json!(ModStatus::InitalSuccess))
-                }
+                "mod_initial" => Ok(json!(ModStatus::InitalSuccess)),
                 "on_connect" => {
                     let params: OnConnectNotify =
                         async_parse_check!(msg.args, EwfError::CallParamValidFaild);
@@ -204,9 +198,6 @@ impl Handler<Call> for TransactionModule {
                     let params: RecvMsgPackage =
                         async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                    let uid = params.recv_uid.clone();
-                    let txid = params.msg.txid.clone();
-
                     self_addr
                         .send(RecvMsgPackageByTxConn {
                             msg: params.msg,
@@ -241,7 +232,10 @@ impl Handler<Call> for TransactionModule {
                         bus_addr,
                         "tx_conn",
                         "close_conn",
-                        json!(CloseConnectRequest { uid: params.uid, txid: params.txid })
+                        json!(CloseConnectRequest {
+                            uid: params.uid,
+                            txid: params.txid
+                        })
                     );
 
                     Ok(Value::Null)
@@ -281,7 +275,10 @@ impl Handler<Call> for TransactionModule {
                         bus_addr,
                         "tx_conn",
                         "close_conn",
-                        json!(CloseConnectRequest { uid: params.uid, txid: params.txid })
+                        json!(CloseConnectRequest {
+                            uid: params.uid,
+                            txid: params.txid
+                        })
                     );
 
                     Ok(Value::Null)
@@ -509,28 +506,11 @@ impl Handler<RecvMsgPackageByTxConn> for TransactionModule {
                         .await?;
                         Ok(transition!(bus_addr, tx_sm_id, "RecvCurrencyStat"))
                     }
-                    "CurrencyPlan" => {
-                        if recv_currency_plan(
-                            tx_payload_addr,
-                            bus_addr.clone(),
-                            params.msg.data,
-                            payload,
-                        )
-                        .await?
-                        {
-                            Ok(transition!(
-                                bus_addr,
-                                tx_sm_id,
-                                "RecvCurrencyPlanNeedExchange"
-                            ))
-                        } else {
-                            Ok(transition!(
-                                bus_addr,
-                                tx_sm_id,
-                                "RecvCurrencyPlanNotNeedExchange"
-                            ))
-                        }
-                    }
+                    "CurrencyPlan" => Ok(transition!(
+                        bus_addr,
+                        tx_sm_id,
+                        "RecvCurrencyPlanNotNeedExchange"
+                    )),
                     "TransactionSyn" => {
                         recv_transaction_syn(
                             tx_payload_addr.clone(),
@@ -609,7 +589,7 @@ impl Module for TransactionModule {
 }
 
 async fn send_transaction_context_syn(
-    tx_payload_addr: Addr<TXPayloadMgr>,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
@@ -703,7 +683,7 @@ async fn recv_paymentplansyn(
 /// 回应transaction_context_syn
 ///     在transaction_context_ack中exchangers添加自己的信息
 async fn send_paymentplanack(
-    tx_payload_addr: Addr<TXPayloadMgr>,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
@@ -780,7 +760,7 @@ async fn send_currency_stat(
     bus_addr: Addr<Bus>,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
-    let statistics: Vec<StatisticsItem> = async_parse_check_withlog!(
+    let currencys: Vec<CurrencyEntityShort> = async_parse_check_withlog!(
         call_mod_througth_bus!(
             bus_addr,
             "currencies",
@@ -788,7 +768,6 @@ async fn send_currency_stat(
             json!(QueryCurrencyStatisticsParam {
                 has_avail: true,
                 has_lock: false,
-                has_wait_confirm: false,
                 owner_uid: payload.uid.clone(),
             })
         ),
@@ -796,8 +775,89 @@ async fn send_currency_stat(
         log::error!("parse func currencies.query_currency_statistics return value error")
     );
 
+    let (pay_amount, pay_plan) =
+        tx_algorithm::find_cover_currency_plan(&currencys, 0, payload.amount)?;
+
+    // 收集付款涉及的货币
+    let pay_lock_ids: Vec<String> = pay_plan.iter().map(|x| x.id.clone()).collect();
+    // 存储锁定的货币，在确认删除，或在失败流程解锁
+    tx_payload_addr
+        .send(MemFnTXSetPayLockCurrencys {
+            tx_sm_id: payload.tx_sm_id,
+            ids: pay_lock_ids.clone(),
+        })
+        .await??;
+
+    let pay_lock_detail: Vec<CurrencyEntity> = async_parse_check_withlog!(
+        call_mod_througth_bus!(
+            bus_addr,
+            "currencies",
+            "lock_currency_by_ids",
+            json!(pay_lock_ids)
+        ),
+        Error::TXExpectError,
+        log::error!("parse func currencies.lock_currency_by_ids return value error")
+    );
+
+    let mut input_amount = 0;
+    let mut inputs = Vec::<DigitalCurrencyWrapper>::new();
+    for each in pay_lock_detail {
+        input_amount += each.currency.get_body().get_amount();
+        inputs.push(each.currency);
+    }
+
+    // 证书信息
+    let self_exchanger = &payload.self_exchanger.unwrap();
+    let self_cert = CertificateSm2::from_bytes(
+        &Vec::<u8>::from_hex(&self_exchanger.cert).expect("data incrrect"),
+    )
+    .expect("data incrrect");
+    // 对手方
+    let oppo_exchanger = &payload.other_exchangers[0];
+    let oppo_cert = CertificateSm2::from_bytes(
+        &Vec::<u8>::from_hex(&oppo_exchanger.cert).expect("data incrrect"),
+    )
+    .expect("data incrrect");
+
+    // 组建交易体，签名
+    let mut outputs = Vec::<(CertificateSm2, u64)>::new();
+    outputs.push((oppo_cert, payload.amount));
+    if pay_amount > payload.amount {
+        outputs.push((self_cert, pay_amount - payload.amount));
+    }
+
+    let unsign_transaction = Transaction::new(inputs, outputs);
+
+    let ans: SignTransactionResponse = async_parse_check_withlog!(
+        call_mod_througth_bus!(
+            bus_addr,
+            "secret",
+            "sign_transaction",
+            json!(SignTransactionRequest {
+                uid: payload.uid.clone(),
+                transaction: unsign_transaction.clone(),
+            })
+        ),
+        Error::TXExpectError,
+        log::error!("parse func secret.sign_transaction return value error")
+    );
+
+    let mut sign_transaction = TransactionWrapper::new(unsign_transaction);
+    sign_transaction
+        .fill_sign(ans.cert, ans.sig)
+        .map_err(|_| Error::TXTransactionSignError)?;
+
+    // 等待见证数据
+    tx_payload_addr
+        .send(MemFnTXSetWaitConfirmCurrencys {
+            tx_sm_id: payload.tx_sm_id,
+            transaction: sign_transaction.clone(),
+            output: input_amount - payload.amount,
+        })
+        .await??;
+
     let currency_stat = CurrencyStat {
-        statistics: tx_algorithm::get_currenics_for_change(statistics),
+        transaction: sign_transaction,
     };
 
     call_mod_througth_bus!(
@@ -818,16 +878,17 @@ async fn send_currency_stat(
 
 async fn recv_currencystat(
     tx_payload_addr: Addr<TXPayloadMgr>,
-    bus_addr: Addr<Bus>,
+    _bus_addr: Addr<Bus>,
     msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
     let recv = CurrencyStat::from_msgpack(msg_data)?;
 
     tx_payload_addr
-        .send(MemFnTXSetPayCurrencyStat {
+        .send(MemFnTXSetWaitConfirmCurrencys {
             tx_sm_id: payload.tx_sm_id,
-            currency_stat: recv,
+            transaction: recv.transaction,
+            output: payload.amount,
         })
         .await??;
 
@@ -836,84 +897,23 @@ async fn recv_currencystat(
 
 /// 收款者计算支付方案，返回方案是否需要找零
 async fn compute_plan(
-    tx_payload_addr: Addr<TXPayloadMgr>,
-    bus_addr: Addr<Bus>,
-    payload: TransactionPayload,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
+    _bus_addr: Addr<Bus>,
+    _payload: TransactionPayload,
 ) -> Result<bool, Error> {
-    let statistics: Vec<StatisticsItem> = async_parse_check_withlog!(
-        call_mod_througth_bus!(
-            bus_addr,
-            "currencies",
-            "query_currency_statistics",
-            json!(QueryCurrencyStatisticsParam {
-                has_avail: true,
-                has_lock: false,
-                has_wait_confirm: false,
-                owner_uid: payload.uid.clone(),
-            })
-        ),
-        Error::TXExpectError,
-        log::error!("parse func currencies.query_currency_statistics return value error")
-    );
-    let receiver_stat = tx_algorithm::get_currenics_for_change(statistics);
-
-    let aim_amount = payload.amount % 10000u64;
-    let pay_currency_stat = match payload.pay_currency_stat {
-        Some(pay_currency_stat) => pay_currency_stat,
-        None => {
-            log::error!("exchange currency but still not found avail currency plan");
-            return Err(Error::TXExpectError);
-        }
-    };
-    let currency_plan = match tx_algorithm::ComputeCurrencyPlanA::new().find_currency_plan(
-        pay_currency_stat.statistics,
-        receiver_stat,
-        aim_amount,
-    ) {
-        Ok(currency_plan) => currency_plan,
-        Err(Error::TXPayNotAvailChangePlan) => return Ok(true),
-        // 余额不足
-        Err(err) => return Err(err),
-    };
-
-    tx_payload_addr
-        .send(MemFnTXSetCurrencyPlan {
-            tx_sm_id: payload.tx_sm_id,
-            // 仅双方，所以数组固定有两个元素
-            peer_plan: vec![
-                PeerCurrencyPlan {
-                    uid: payload.oppo_uid,
-                    item: currency_plan.clone(),
-                },
-                PeerCurrencyPlan {
-                    uid: payload.uid,
-                    item: CurrencyPlanItem {
-                        pay_amount: currency_plan.recv_amount,
-                        pay_plan: currency_plan.recv_plan,
-                        recv_amount: currency_plan.pay_amount,
-                        recv_plan: currency_plan.pay_plan,
-                    },
-                },
-            ],
-        })
-        .await??;
-
-    if currency_plan.recv_amount != 0 {
-        return Ok(true);
-    }
     Ok(false)
 }
 
-async fn exchange_currency(
-    tx_payload_addr: Addr<TXPayloadMgr>,
-    bus_addr: Addr<Bus>,
-    payload: TransactionPayload,
+async fn _exchange_currency(
+    _tx_payload_addr: Addr<TXPayloadMgr>,
+    _bus_addr: Addr<Bus>,
+    _payload: TransactionPayload,
 ) -> Result<(), Error> {
     Ok(())
 }
 
 async fn send_currency_plan(
-    tx_payload_addr: Addr<TXPayloadMgr>,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
@@ -924,10 +924,7 @@ async fn send_currency_plan(
         json!(SendMsgPackage {
             msg: MsgPackage {
                 txid: payload.txid,
-                data: CurrencyPlan {
-                    peer_plans: payload.currency_plan
-                }
-                .to_msgpack(),
+                data: CurrencyPlan {}.to_msgpack(),
             },
             send_uid: payload.uid,
         })
@@ -936,123 +933,20 @@ async fn send_currency_plan(
     Ok(())
 }
 
-async fn recv_currency_plan(
-    tx_payload_addr: Addr<TXPayloadMgr>,
-    bus_addr: Addr<Bus>,
-    msg_data: TransactionType,
-    payload: TransactionPayload,
+async fn _recv_currency_plan(
+    _tx_payload_addr: Addr<TXPayloadMgr>,
+    _bus_addr: Addr<Bus>,
+    _msg_data: TransactionType,
+    _payload: TransactionPayload,
 ) -> Result<bool, Error> {
-    let recv = CurrencyPlan::from_msgpack(msg_data)?;
-
-    let mut iter = recv.peer_plans.iter();
-    let user_plan = loop {
-        if let Some(peer_plan) = iter.next() {
-            if peer_plan.uid == payload.uid {
-                break peer_plan.item.clone();
-            }
-        } else {
-            return Err(Error::TXCurrencyPlanNotValid);
-        }
-    };
-
-    tx_payload_addr
-        .send(MemFnTXSetCurrencyPlan {
-            tx_sm_id: payload.tx_sm_id,
-            peer_plan: recv.peer_plans,
-        })
-        .await??;
-
-    // 按照收款方指定的支付方案，看是否需要兑零
-    // TODO 支付方兑零
-    // user_plan
-
     Ok(false)
 }
 
 async fn send_transaction_syn(
-    tx_payload_addr: Addr<TXPayloadMgr>,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
-    let mut iter = payload.currency_plan.iter();
-    let user_plan = loop {
-        if let Some(peer_plan) = iter.next() {
-            if peer_plan.uid == payload.uid {
-                break peer_plan.item.clone();
-            }
-        } else {
-            return Err(Error::TXCurrencyPlanNotValid);
-        }
-    };
-
-    let picked_currencys: Vec<CurrencyEntity> = async_parse_check_withlog!(
-        call_mod_througth_bus!(
-            bus_addr,
-            "currencies",
-            "pick_specified_num_currency",
-            json!(PickSpecifiedNumCurrencyParam {
-                items: user_plan.pay_plan,
-                owner_uid: payload.uid.clone(),
-            })
-        ),
-        Error::TXExpectError,
-        log::error!("parse func currencies.pick_specified_num_currency return value error")
-    );
-
-    let mut sign_currencys = Vec::<DigitalCurrencyWrapper>::new();
-    let mut pay_lock_ids = Vec::<String>::new();
-    for each in &picked_currencys {
-        match each {
-            CurrencyEntity::AvailEntity {
-                id,
-                owner_uid: _,
-                value: _,
-                currency,
-                currency_str: _,
-                txid: _,
-                update_time: _,
-                last_owner_id: _,
-            } => {
-                sign_currencys.push(currency.clone());
-                pay_lock_ids.push(id.clone());
-            }
-            _ => {
-                log::error!("currencies return currency not avail type");
-                return Err(Error::TXExpectError);
-            }
-        };
-    }
-
-    // 收集锁定的货币，在确认删除，或在失败流程解锁
-    tx_payload_addr
-        .send(MemFnTXSetPayLockCurrencys {
-            tx_sm_id: payload.tx_sm_id,
-            ids: pay_lock_ids,
-        })
-        .await??;
-
-    // 对手方
-    let oppo_exchanger = &payload.other_exchangers[0];
-    let oppo_cert = CertificateSm2::from_bytes(
-        &Vec::<u8>::from_hex(&oppo_exchanger.cert).expect("data incrrect"),
-    )
-    .expect("data incrrect");
-
-    let signed_transactions: SignTransactionResponse = async_parse_check_withlog!(
-        call_mod_througth_bus!(
-            bus_addr,
-            "secret",
-            "sign_transaction",
-            json!(SignTransactionRequest {
-                uid: payload.uid.clone(),
-                oppo_cert,
-                datas: sign_currencys,
-            })
-        ),
-        Error::TXExpectError,
-        log::error!("parse func secret.sign_transaction return value error")
-    );
-
     call_mod_througth_bus!(
         bus_addr,
         "tx_conn",
@@ -1060,37 +954,26 @@ async fn send_transaction_syn(
         json!(SendMsgPackage {
             msg: MsgPackage {
                 txid: payload.txid,
-                data: TransactionSyn {
-                    tx_datas: signed_transactions.datas
-                }
-                .to_msgpack(),
+                data: TransactionSyn {}.to_msgpack(),
             },
             send_uid: payload.uid,
         })
     );
+
     Ok(())
 }
 
 async fn recv_transaction_syn(
-    tx_payload_addr: Addr<TXPayloadMgr>,
-    bus_addr: Addr<Bus>,
-    msg_data: TransactionType,
-    payload: TransactionPayload,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
+    _bus_addr: Addr<Bus>,
+    _msg_data: TransactionType,
+    _payload: TransactionPayload,
 ) -> Result<(), Error> {
-    let recv = TransactionSyn::from_msgpack(msg_data)?;
-
-    tx_payload_addr
-        .send(MemFnTXSetRecvWaitConfirmCurrencys {
-            tx_sm_id: payload.tx_sm_id,
-            currencys: recv.tx_datas,
-        })
-        .await??;
-
     Ok(())
 }
 
 async fn send_transaction_confirm(
-    tx_payload_addr: Addr<TXPayloadMgr>,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
@@ -1112,24 +995,42 @@ async fn send_transaction_confirm(
 async fn recv_transaction_confirm(
     tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
-    msg_data: TransactionType,
+    _msg_data: TransactionType,
     payload: TransactionPayload,
 ) -> Result<(), Error> {
-    for each in payload.recv_wait_confirm_currencys {
-        call_mod_througth_bus!(
-            bus_addr,
-            "currencies",
-            "add_currency",
-            json!(AddCurrencyParam::WaitConfirmEntity {
-                owner_uid: payload.uid.clone(),
-                transaction_str: each,
-                txid: payload.txid.clone(),
-                last_owner_id: payload.oppo_uid.clone(),
-            })
-        );
+    if let None = payload.wait_confirm_transaction {
+        return Err(Error::TXExpectError);
     }
+
+    if let Some(wait_confirm_transaction) = payload.wait_confirm_transaction {
+        let (status, trans_type) = if payload.is_payer {
+            if payload.output == 0 {
+                (TransStatus::Confirm, TransType::Pay)
+            } else {
+                (TransStatus::WaitConfirm, TransType::Pay)
+            }
+        } else {
+            (TransStatus::WaitConfirm, TransType::Recv)
+        };
+        let history = HistoryEntity {
+            uid: payload.uid.clone(),
+            txid: payload.txid.clone(),
+            transaction: wait_confirm_transaction.to_bytes().encode_hex_upper(),
+            status,
+            trans_type,
+            oppo_uid: payload.oppo_uid.clone(),
+            occur_time: Local::now().timestamp_millis(),
+            amount: payload.amount,
+            output: payload.output,
+            balance: 0,
+            remark: "".to_string(),
+        };
+        call_mod_througth_bus!(bus_addr, "history", "add_history", json!(history));
+    }
+
     // 若本地两账户互转，插入新货币和删除旧的时序不确定，所以删除仅删除Lock状态的
     for each in payload.pay_lock_currencys {
+        println!("");
         call_mod_througth_bus!(
             bus_addr,
             "currencies",
@@ -1148,7 +1049,7 @@ async fn recv_transaction_confirm(
 }
 
 async fn end_transaction(
-    tx_payload_addr: Addr<TXPayloadMgr>,
+    _tx_payload_addr: Addr<TXPayloadMgr>,
     bus_addr: Addr<Bus>,
     payload: TransactionPayload,
 ) -> Result<(), Error> {

@@ -24,7 +24,7 @@ use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
 
-use wallet_common::history::{HistoryEntity, TransType};
+use wallet_common::history::{HistoryEntity, TransStatus, TransType};
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 
@@ -34,13 +34,16 @@ static HISTORY_STORE_TABLE: &'static str = r#"
 CREATE TABLE "history_store" (
     "uid" VARCHAR(255) NOT NULL,
     "txid" VARCHAR(255) NOT NULL,
+    "transaction" TEXT NOT NULL,
+    "status" SMALLINT NOT NULL,
     "trans_type" SMALLINT NOT NULL,
     "oppo_uid" VARCHAR(255) NOT NULL,
     "occur_time" TIMESTAMP NOT NULL,
     "amount" BIGINT NOT NULL,
+    "output" BIGINT NOT NULL,
     "balance" BIGINT NOT NULL,
     "remark" TEXT,
-    PRIMARY KEY ("txid")
+    PRIMARY KEY ("uid", "txid")
   )
 "#;
 
@@ -142,6 +145,8 @@ impl HistoryModule {
             &NewHistoryStore {
                 uid: &history.uid,
                 txid: &history.txid,
+                transaction: &history.transaction,
+                status: history.status.to_int16(),
                 trans_type: history.trans_type.to_int16(),
                 oppo_uid: &history.oppo_uid,
                 occur_time: &NaiveDateTime::from_timestamp(
@@ -149,6 +154,7 @@ impl HistoryModule {
                     (history.occur_time % 1000 * 1_000_000) as u32,
                 ),
                 amount: history.amount as i64,
+                output: history.output as i64,
                 balance: history.balance as i64,
                 remark: &history.remark,
             },
@@ -178,10 +184,13 @@ impl HistoryModule {
             rets.push(HistoryEntity {
                 uid: history.uid,
                 txid: history.txid,
+                transaction: history.transaction,
+                status: TransStatus::from_int16(history.status),
                 trans_type: TransType::from_int16(history.trans_type),
                 oppo_uid: history.oppo_uid,
                 occur_time: history.occur_time.timestamp_millis(),
                 amount: history.amount as u64,
+                output: history.output as u64,
                 balance: history.balance as u64,
                 remark: history.remark,
             });

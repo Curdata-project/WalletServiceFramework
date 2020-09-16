@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 kv-object = { git = "https://curdata-bots:SBf(TdV2yeBP@github.com/Curdata-project/KVObject" }
-common-structure = { git = "https://curdata-bots:SBf(TdV2yeBP@github.com/Curdata-project/CommonStructure", branch = "fix_dependerror" }
+common-structure = { git = "https://curdata-bots:SBf(TdV2yeBP@github.com/Curdata-project/CommonStructure", branch = "dev" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.56"
 chrono = "0.4.13"

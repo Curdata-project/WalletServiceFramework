@@ -43,6 +43,13 @@ pub struct CurrencyEntity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyEntityShort {
+    pub id: String,
+    pub amount: u64,
+    pub status: CurrencyStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddCurrencyParam {
     pub owner_uid: String,
     pub currency_str: String,
@@ -66,7 +73,6 @@ pub struct CurrencyQuery {
 pub struct QueryCurrencyStatisticsParam {
     pub has_avail: bool,
     pub has_lock: bool,
-    pub has_wait_confirm: bool,
     pub owner_uid: String,
 }
 

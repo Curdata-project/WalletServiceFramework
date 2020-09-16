@@ -6,10 +6,13 @@ use chrono::NaiveDateTime;
 pub struct NewHistoryStore<'a> {
     pub uid: &'a str,
     pub txid: &'a str,
+    pub transaction: &'a str,
+    pub status: i16,
     pub trans_type: i16,
     pub oppo_uid: &'a str,
     pub occur_time: &'a NaiveDateTime,
     pub amount: i64,
+    pub output: i64,
     pub balance: i64,
     pub remark: &'a str,
 }
@@ -18,10 +21,13 @@ pub struct NewHistoryStore<'a> {
 pub struct HistoryStore {
     pub uid: String,
     pub txid: String,
+    pub transaction: String,
+    pub status: i16,
     pub trans_type: i16,
     pub oppo_uid: String,
     pub occur_time: NaiveDateTime,
     pub amount: i64,
+    pub output: i64,
     pub balance: i64,
     pub remark: String,
 }

@@ -1,14 +1,11 @@
 use crate::error::Error;
-use crate::tx_payload_mgr::PeerCurrencyPlan;
 use common_structure::transaction::TransactionWrapper;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use wallet_common::currencies::StatisticsItem;
-use wallet_common::transaction::TransactionExchangerItem;
 use wallet_common::connect::TransactionType;
+use wallet_common::transaction::TransactionExchangerItem;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct MsgWrapper{
+struct MsgWrapper {
     txmsgtype: String,
     data: Vec<u8>,
 }
@@ -16,25 +13,24 @@ struct MsgWrapper{
 pub fn get_msgtype(pack: &TransactionType) -> String {
     if let Ok(msg) = bincode::deserialize::<MsgWrapper>(pack) {
         msg.txmsgtype
-    }
-    else{
+    } else {
         "".to_string()
     }
 }
 
 pub trait TXMsgPackageData: Sized + Serialize + for<'de> Deserialize<'de> {
     fn to_msgpack(self) -> TransactionType {
-        bincode::serialize(&MsgWrapper{
+        bincode::serialize(&MsgWrapper {
             txmsgtype: Self::get_msgtype(),
             data: bincode::serialize(&self).unwrap(),
-        }).unwrap()
+        })
+        .unwrap()
     }
 
     fn from_msgpack(pack: TransactionType) -> Result<Self, Error> {
         if let Ok(msg) = bincode::deserialize::<MsgWrapper>(&pack) {
             bincode::deserialize(&msg.data).map_err(|_| Error::TXMsgPackBroken)
-        }
-        else{
+        } else {
             Err(Error::TXMsgPackBroken)
         }
     }
@@ -67,7 +63,7 @@ impl TXMsgPackageData for TransactionContextAck {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrencyStat {
-    pub statistics: Vec<StatisticsItem>,
+    pub transaction: TransactionWrapper,
 }
 
 impl TXMsgPackageData for CurrencyStat {
@@ -77,9 +73,7 @@ impl TXMsgPackageData for CurrencyStat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CurrencyPlan {
-    pub peer_plans: Vec<PeerCurrencyPlan>,
-}
+pub struct CurrencyPlan {}
 
 impl TXMsgPackageData for CurrencyPlan {
     fn get_msgtype() -> String {
@@ -88,9 +82,7 @@ impl TXMsgPackageData for CurrencyPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionSyn {
-    pub tx_datas: Vec<String>,
-}
+pub struct TransactionSyn {}
 
 impl TXMsgPackageData for TransactionSyn {
     fn get_msgtype() -> String {

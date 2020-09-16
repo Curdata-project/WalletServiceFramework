@@ -252,7 +252,7 @@ impl SecretModule {
                     secret_type: secret.secret_type,
                     keypair: KeyPairEntity::Sm2(
                         KeyPairSm2::from_bytes(
-                            &Vec::<u8>::from_hex(&secret.cert).expect("data incrrect"),
+                            &Vec::<u8>::from_hex(&secret.keypair).expect("data incrrect"),
                         )
                         .expect("data incrrect"),
                     ),

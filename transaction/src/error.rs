@@ -14,6 +14,7 @@ pub enum Error {
     TXPayBalanceNotEnough,
     TXPayNotAvailChangePlan,
     TXCurrencyPlanNotValid,
+    TXTransactionSignError,
 
     TXExpectError,
 }
@@ -33,6 +34,7 @@ impl Error {
             Error::TXPayBalanceNotEnough => "交易金额不足".to_string(),
             Error::TXPayNotAvailChangePlan => "没有可用找零方案".to_string(),
             Error::TXCurrencyPlanNotValid => "交易收到的支付方案不合法".to_string(),
+            Error::TXTransactionSignError => "交易签名失败".to_string(),
             Error::TXExpectError => "交易意外出错".to_string(),
         }
     }

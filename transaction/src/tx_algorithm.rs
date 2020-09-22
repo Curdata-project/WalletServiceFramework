@@ -28,7 +28,7 @@ pub fn find_cover_currency_plan(
 
     if left_amount > 0 {
         if let Some(last) = last {
-            while ret.len() > last.2{
+            while ret.len() > last.2 {
                 ret.pop();
             }
             ret.push(last.0.clone());
@@ -47,32 +47,80 @@ mod tests {
     use wallet_common::currencies::{CurrencyEntityShort, CurrencyStatus};
 
     #[test]
-    fn test_pay(){
+    fn test_pay() {
         let mut avails = Vec::<CurrencyEntityShort>::new();
-        avails.push(CurrencyEntityShort{
+        avails.push(CurrencyEntityShort {
             id: "abcdefabcdef001".to_string(),
             amount: 101u64,
-            status: CurrencyStatus::Avail});
-        avails.push(CurrencyEntityShort{
+            status: CurrencyStatus::Avail,
+        });
+        avails.push(CurrencyEntityShort {
             id: "abcdefabcdef002".to_string(),
             amount: 51u64,
-            status: CurrencyStatus::Avail});
-        avails.push(CurrencyEntityShort{
+            status: CurrencyStatus::Avail,
+        });
+        avails.push(CurrencyEntityShort {
             id: "abcdefabcdef003".to_string(),
             amount: 50u64,
-            status: CurrencyStatus::Avail});
-        avails.push(CurrencyEntityShort{
+            status: CurrencyStatus::Avail,
+        });
+        avails.push(CurrencyEntityShort {
             id: "abcdefabcdef003".to_string(),
             amount: 20u64,
-            status: CurrencyStatus::Avail});
+            status: CurrencyStatus::Avail,
+        });
 
         let ret = find_cover_currency_plan(&avails, 101);
-        assert_eq!((101, vec![CurrencyEntityShort { id: "abcdefabcdef001".to_string(), amount: 101, status: CurrencyStatus::Avail }]), ret.unwrap());
+        assert_eq!(
+            (
+                101,
+                vec![CurrencyEntityShort {
+                    id: "abcdefabcdef001".to_string(),
+                    amount: 101,
+                    status: CurrencyStatus::Avail
+                }]
+            ),
+            ret.unwrap()
+        );
 
         let ret = find_cover_currency_plan(&avails, 151);
-        assert_eq!((151, vec![CurrencyEntityShort { id: "abcdefabcdef001".to_string(), amount: 101, status: CurrencyStatus::Avail }, CurrencyEntityShort { id: "abcdefabcdef003".to_string(), amount: 50, status: CurrencyStatus::Avail }]), ret.unwrap());
+        assert_eq!(
+            (
+                151,
+                vec![
+                    CurrencyEntityShort {
+                        id: "abcdefabcdef001".to_string(),
+                        amount: 101,
+                        status: CurrencyStatus::Avail
+                    },
+                    CurrencyEntityShort {
+                        id: "abcdefabcdef003".to_string(),
+                        amount: 50,
+                        status: CurrencyStatus::Avail
+                    }
+                ]
+            ),
+            ret.unwrap()
+        );
 
         let ret = find_cover_currency_plan(&avails, 122);
-        assert_eq!((151, vec![CurrencyEntityShort { id: "abcdefabcdef001".to_string(), amount: 101, status: CurrencyStatus::Avail }, CurrencyEntityShort { id: "abcdefabcdef003".to_string(), amount: 50, status: CurrencyStatus::Avail }]), ret.unwrap());
+        assert_eq!(
+            (
+                151,
+                vec![
+                    CurrencyEntityShort {
+                        id: "abcdefabcdef001".to_string(),
+                        amount: 101,
+                        status: CurrencyStatus::Avail
+                    },
+                    CurrencyEntityShort {
+                        id: "abcdefabcdef003".to_string(),
+                        amount: 50,
+                        status: CurrencyStatus::Avail
+                    }
+                ]
+            ),
+            ret.unwrap()
+        );
     }
 }

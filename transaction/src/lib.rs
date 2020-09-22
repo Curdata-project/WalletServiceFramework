@@ -776,7 +776,7 @@ async fn send_currency_stat(
     );
 
     let (pay_amount, pay_plan) =
-        tx_algorithm::find_cover_currency_plan(&currencys, 0, payload.amount)?;
+        tx_algorithm::find_cover_currency_plan(&currencys, payload.amount)?;
 
     // 收集付款涉及的货币
     let pay_lock_ids: Vec<String> = pay_plan.iter().map(|x| x.id.clone()).collect();

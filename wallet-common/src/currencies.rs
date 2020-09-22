@@ -42,7 +42,7 @@ pub struct CurrencyEntity {
     pub status: CurrencyStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct CurrencyEntityShort {
     pub id: String,
     pub amount: u64,

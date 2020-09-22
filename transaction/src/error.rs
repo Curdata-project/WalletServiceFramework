@@ -2,7 +2,6 @@ use actix::prelude::*;
 use ewf_core::error::Error as EwfError;
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Error {
     TXMsgPackBroken,

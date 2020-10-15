@@ -13,7 +13,7 @@
 
 ## Overview
 
-EWF是一个为DCEP设计的多功能，多场景，可扩展的钱包框架。EWF的设计考虑到多平台，多场景，多功能的需求，采用基于Actor模型的模块化设计，使用Rust实现，保证框架运行的稳定性与内存安全性。同时EWF会提供可运行在 `Webassemble` 安全沙箱环境内的框架主体，进一步提升EWF的安全性，稳定性与多环境适配性。
+EWF是一个为DCEP设计的多功能，多场景，可扩展的钱包框架。EWF的设计考虑到多平台，多场景，多功能的需求，采用基于Actor模型的模块化设计，使用Rust实现，保证框架运行的稳定性与内存安全性。同时EWF会提供可运行在 `Webassembly` 安全沙箱环境内的框架主体，进一步提升EWF的安全性，稳定性与多环境适配性。
 
 EWF的技术架构图如下：
 
@@ -29,7 +29,7 @@ EWF的技术架构图如下：
 ### Related-project
 
 - [Stem](https://github.com/Yinet-project/Stem): 基于P2P协议的分布式网络基础设施。
-- [Marrow](https://github.com/Yinet-project/marrow): 构建于 `Webassemle` 上的安全运行环境。
+- [Marrow](https://github.com/Yinet-project/marrow): 构建于 `Webassembly` 上的安全运行环境。
 
 ## State of project
 

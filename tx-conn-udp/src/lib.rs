@@ -1,3 +1,5 @@
+#![recursion_limit = "1024"]
+
 mod conn_mgr;
 
 mod error;
@@ -12,7 +14,7 @@ use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::json;
 use wallet_common::connect::{
     BindTransPortParam, CloseBindTransPortParam, CloseConnectRequest, ConnectRequest,
-    OnConnectNotify, RecvMsgPackage, SendMsgPackage,
+    OnConnectNotify, RecvMsgPackage, RouteInfo, SendMsgPackage,
 };
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
@@ -89,7 +91,8 @@ impl Handler<Call> for TXConnModule {
 
                     conn_mgr_addr
                         .send(conn_mgr::MemFnBindListenParam { uid: params.uid })
-                        .await?;
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
 
                     Ok(Value::Null)
                 }
@@ -123,7 +126,10 @@ impl Handler<Call> for TXConnModule {
                         async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
                     conn_mgr_addr
-                        .send(conn_mgr::MemFnCloseParam { txid: params.txid })
+                        .send(conn_mgr::MemFnCloseParam {
+                            uid: params.uid,
+                            txid: params.txid,
+                        })
                         .await?;
 
                     Ok(Value::Null)
@@ -147,12 +153,7 @@ impl Handler<Call> for TXConnModule {
                     let params: RecvMsgPackage =
                         async_parse_check!(msg.args, EwfError::CallParamValidFaild);
 
-                    log::debug!(
-                        "RECV: UID {} TX {} => DATA {}",
-                        params.recv_uid,
-                        params.msg.txid,
-                        params.msg.data
-                    );
+                    log::debug!("RECV: UID {} TX {}", params.recv_uid, params.msg.txid,);
                     call_mod_througth_bus!(bus_addr, "transaction", "recv_tx_msg", json!(params));
 
                     Ok(Value::Null)
@@ -164,6 +165,29 @@ impl Handler<Call> for TXConnModule {
 
                     Ok(Value::Null)
                 }
+                "add_route_info" => {
+                    let params: RouteInfo =
+                        async_parse_check!(msg.args, EwfError::CallParamValidFaild);
+
+                    conn_mgr_addr
+                        .send(conn_mgr::MemFnBindUidUrlParam {
+                            uid: params.uid,
+                            url: params.url,
+                        })
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
+
+                    Ok(Value::Null)
+                }
+                "get_route_infos" => {
+                    let res = conn_mgr_addr
+                        .send(conn_mgr::MemFnGetRouteInfosParam {})
+                        .await?
+                        .map_err(|err| err.to_ewf_error())?;
+
+                    Ok(json!(res))
+                }
+                "del_route_info" => Ok(Value::Null),
                 _ => Err(EwfError::MethodNotFoundError),
             }
         })

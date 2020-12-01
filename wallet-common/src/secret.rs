@@ -1,4 +1,5 @@
-use kv_object::sm2::{CertificateSm2, KeyPairSm2};
+use common_structure::transaction::Transaction;
+use kv_object::sm2::{CertificateSm2, KeyPairSm2, SignatureSm2};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,4 +43,16 @@ pub struct RegisterRequest {
 pub struct RegisterResponse {
     pub uid: String,
     pub cert: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignTransactionRequest {
+    pub uid: String,
+    pub transaction: Transaction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignTransactionResponse {
+    pub cert: CertificateSm2,
+    pub sig: SignatureSm2,
 }

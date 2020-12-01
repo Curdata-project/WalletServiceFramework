@@ -1,10 +1,12 @@
+use crate::query::QueryParam;
 use common_structure::digital_currency::DigitalCurrencyWrapper;
-use common_structure::transaction::TransactionWrapper;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CurrencyStatus {
+    /// 可用货币
     Avail,
+    /// 交易锁定货币
     Lock,
 }
 
@@ -28,38 +30,87 @@ impl From<i16> for CurrencyStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CurrencyEntity {
-    AvailEntity {
-        id: String,
-        currency: DigitalCurrencyWrapper,
-        txid: String,
-        update_time: i64,
-        last_owner_id: String,
-    },
-    LockEntity {
-        id: String,
-        transaction: TransactionWrapper,
-        txid: String,
-        update_time: i64,
-        last_owner_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AddCurrencyParam {
-    AvailEntity {
-        currency: DigitalCurrencyWrapper,
-        txid: String,
-        last_owner_id: String,
-    },
-    LockEntity {
-        transaction: TransactionWrapper,
-        txid: String,
-        last_owner_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnlockCurrencyParam {
+pub struct CurrencyEntity {
+    pub id: String,
+    pub owner_uid: String,
+    pub amount: u64,
     pub currency: DigitalCurrencyWrapper,
+    pub currency_str: String,
+    pub txid: String,
+    pub update_time: i64,
+    pub last_owner_id: String,
+    pub status: CurrencyStatus,
+}
+
+#[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyEntityShort {
+    pub id: String,
+    pub amount: u64,
+    pub status: CurrencyStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddCurrencyParam {
+    pub owner_uid: String,
+    pub currency_str: String,
+    pub txid: String,
+    pub last_owner_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfirmCurrencyParam {
+    pub owner_uid: String,
+    pub currency_str: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyQuery {
+    pub query_param: QueryParam,
+    pub uid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryCurrencyStatisticsParam {
+    pub has_avail: bool,
+    pub has_lock: bool,
+    pub owner_uid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnLockCurrencyParam {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyDepositParam {
+    pub uid: String,
+    pub bank_num: String,
+    pub amount: u64,
+    pub currencys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyWithdrawParam {
+    pub uid: String,
+    pub bank_num: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyWithdrawResult {
+    pub currencys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertInfo {
+    pub uid: String,
+    pub amount: u64,
+    pub plan: Vec<(u64, u64)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertParam {
+    pub url: String,
+    pub timeout: u64,
+    pub info: CurrencyConvertInfo,
 }

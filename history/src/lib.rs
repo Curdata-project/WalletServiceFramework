@@ -18,13 +18,13 @@ use actix::ResponseFuture;
 use chrono::NaiveDateTime;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
+use ewf_core::async_parse_check;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{async_parse_check};
 use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
 
-use wallet_common::history::{HistoryEntity, TransType};
+use wallet_common::history::{HistoryEntity, TransStatus, TransType};
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 
@@ -34,13 +34,16 @@ static HISTORY_STORE_TABLE: &'static str = r#"
 CREATE TABLE "history_store" (
     "uid" VARCHAR(255) NOT NULL,
     "txid" VARCHAR(255) NOT NULL,
+    "transaction" TEXT NOT NULL,
+    "status" SMALLINT NOT NULL,
     "trans_type" SMALLINT NOT NULL,
     "oppo_uid" VARCHAR(255) NOT NULL,
     "occur_time" TIMESTAMP NOT NULL,
     "amount" BIGINT NOT NULL,
+    "output" BIGINT NOT NULL,
     "balance" BIGINT NOT NULL,
     "remark" TEXT,
-    PRIMARY KEY ("txid")
+    PRIMARY KEY ("uid", "txid")
   )
 "#;
 
@@ -58,8 +61,10 @@ impl fmt::Debug for HistoryModule {
 impl HistoryModule {
     pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
-            pool: Pool::new(ConnectionManager::new(&path))
-                .map_err(|_| EwfError::ModuleInstanceError)?,
+            pool: Pool::new(ConnectionManager::new(&path)).map_err(|err| {
+                log::error!("{:?}", err);
+                EwfError::ModuleInstanceError
+            })?,
             bus_addr: None,
         })
     }
@@ -74,6 +79,7 @@ impl HistoryModule {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
+            log::error!("{:?}", err);
             return Err(Error::DatabaseInstallError);
         }
 
@@ -98,10 +104,13 @@ impl HistoryModule {
 
     /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_currency: &NewHistoryStore) -> Result<(), Error> {
-        let affect_rows = diesel::insert_into(history_store)
+        let affect_rows = diesel::replace_into(history_store)
             .values(new_currency)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -114,7 +123,10 @@ impl HistoryModule {
     fn delete(db_conn: &SqliteConnection, uid: &str, txid: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(history_store.find((uid, txid)))
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseDeleteError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseDeleteError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseDeleteError);
@@ -133,6 +145,8 @@ impl HistoryModule {
             &NewHistoryStore {
                 uid: &history.uid,
                 txid: &history.txid,
+                transaction: &history.transaction,
+                status: history.status.to_int16(),
                 trans_type: history.trans_type.to_int16(),
                 oppo_uid: &history.oppo_uid,
                 occur_time: &NaiveDateTime::from_timestamp(
@@ -140,6 +154,7 @@ impl HistoryModule {
                     (history.occur_time % 1000 * 1_000_000) as u32,
                 ),
                 amount: history.amount as i64,
+                output: history.output as i64,
                 balance: history.balance as i64,
                 remark: &history.remark,
             },
@@ -169,10 +184,13 @@ impl HistoryModule {
             rets.push(HistoryEntity {
                 uid: history.uid,
                 txid: history.txid,
+                transaction: history.transaction,
+                status: TransStatus::from_int16(history.status),
                 trans_type: TransType::from_int16(history.trans_type),
                 oppo_uid: history.oppo_uid,
                 occur_time: history.occur_time.timestamp_millis(),
                 amount: history.amount as u64,
+                output: history.output as u64,
                 balance: history.balance as u64,
                 remark: history.remark,
             });
@@ -225,7 +243,7 @@ impl Handler<Call> for HistoryModule {
                     json!(Self::query_history_comb(&db_conn, &param)
                         .map_err(|err| err.to_ewf_error())?)
                 }
-                _ => Value::Null,
+                _ => return Err(EwfError::MethodNotFoundError),
             };
 
             Ok(resp)

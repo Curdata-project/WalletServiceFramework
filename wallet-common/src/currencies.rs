@@ -1,6 +1,7 @@
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::transaction::TransactionWrapper;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CurrencyStatus {
@@ -57,6 +58,32 @@ pub enum AddCurrencyParam {
         txid: String,
         last_owner_id: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatisticsItem {
+    pub value: u64,
+    pub num: u64,
+}
+
+impl PartialEq for StatisticsItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl PartialOrd for StatisticsItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        other.value.partial_cmp(&self.value)
+    }
+}
+
+impl Eq for StatisticsItem {}
+
+impl Ord for StatisticsItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.value.cmp(&other.value)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

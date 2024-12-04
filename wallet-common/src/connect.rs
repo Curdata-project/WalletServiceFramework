@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,13 +27,16 @@ pub struct OnConnectNotify {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloseConnectRequest {
+    pub uid: String,
     pub txid: String,
 }
+
+pub type TransactionType = Vec<u8>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MsgPackage {
     pub txid: String,
-    pub data: Value,
+    pub data: TransactionType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,4 +49,10 @@ pub struct SendMsgPackage {
 pub struct RecvMsgPackage {
     pub msg: MsgPackage,
     pub recv_uid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteInfo {
+    pub uid: String,
+    pub url: String,
 }

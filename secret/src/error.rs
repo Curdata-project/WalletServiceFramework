@@ -23,6 +23,8 @@ pub enum Error {
     RegisterResponseInvaild,
     UnknownSecretType,
     RegisterError(String),
+    SignTransactionError,
+    SecretError,
 }
 
 impl Error {
@@ -64,6 +66,14 @@ impl Error {
             Error::RegisterError(err) => EwfError::JsonRpcError {
                 code: 1004i64,
                 msg: format!("注册失败: ({})", err),
+            },
+            Error::SignTransactionError => EwfError::JsonRpcError {
+                code: 1005i64,
+                msg: "签名失败".to_string(),
+            },
+            Error::SecretError => EwfError::JsonRpcError {
+                code: 1006i64,
+                msg: "密钥类型错误".to_string(),
             },
         }
     }

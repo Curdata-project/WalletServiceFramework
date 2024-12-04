@@ -13,8 +13,12 @@ pub enum Error {
     DatabaseJsonDeSerializeError,
     CallParamValidFaild,
 
-    CurrencyUnlockError,
+    CurrencyConfirmError,
     CurrencyByidNotFound,
+    CurrencyParamInvalid,
+    AvailCurrencyNotEnough,
+    PickCurrencyError,
+    CurrencyUnlockError,
 }
 
 impl Error {
@@ -33,8 +37,30 @@ impl Error {
             }
             Error::CallParamValidFaild => EwfError::CallParamValidFaild,
 
-            Error::CurrencyUnlockError => EwfError::OtherError("CurrencyUnlockError".to_string()),
-            Error::CurrencyByidNotFound => EwfError::OtherError("CurrencyByidNotFound".to_string()),
+            Error::CurrencyConfirmError => EwfError::JsonRpcError {
+                code: 2001i64,
+                msg: "货币交易见证失败".to_string(),
+            },
+            Error::CurrencyByidNotFound => EwfError::JsonRpcError {
+                code: 2002i64,
+                msg: "指定货币未发现".to_string(),
+            },
+            Error::CurrencyParamInvalid => EwfError::JsonRpcError {
+                code: 2003i64,
+                msg: "输入货币未通过校验".to_string(),
+            },
+            Error::AvailCurrencyNotEnough => EwfError::JsonRpcError {
+                code: 2004i64,
+                msg: "可用货币不足".to_string(),
+            },
+            Error::PickCurrencyError => EwfError::JsonRpcError {
+                code: 2005i64,
+                msg: "取可用货币失败".to_string(),
+            },
+            Error::CurrencyUnlockError => EwfError::JsonRpcError {
+                code: 2006i64,
+                msg: "解锁交易货币失败".to_string(),
+            },
         }
     }
 }

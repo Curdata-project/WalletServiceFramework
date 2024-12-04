@@ -8,7 +8,7 @@ use history::HistoryModule;
 use prepare::PrepareModule;
 use secret::SecretModule;
 use transaction::TransactionModule;
-use tx_conn_local::TXConnModule;
+use tx_conn_udp::TXConnModule;
 use user::UserModule;
 use websocket::WebSocketModule;
 
@@ -31,6 +31,7 @@ fn start_sm_wallet() {
     //  secret依赖user，注册后用户信息填写
     //        弱依赖tx_conn，注册成功立刻创建交易通道
     //  tx_conn依赖secret，对本地密钥用户进行交易通道创建
+    //        弱依赖transaction，交易通道收到交易信息流返回
     //  transaction依赖tx_conn，交易依赖交易通道
     //                 history，交易历史记录
     //                 user，用户信息交换

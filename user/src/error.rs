@@ -26,7 +26,7 @@ impl Error {
             Error::DatabaseInsertError => EwfError::OtherError("DatabaseInsertError".to_string()),
             Error::DatabaseDeleteError => EwfError::OtherError("DatabaseDeleteError".to_string()),
             Error::UserByidNotFound => EwfError::JsonRpcError {
-                code: 1401i64,
+                code: 3001i64,
                 msg: format!("未发现该用户"),
             },
         }

@@ -10,7 +10,10 @@ mod schema;
 use crate::models::*;
 use crate::schema::currency_store::dsl::{self, currency_store};
 use diesel::connection::SimpleConnection;
+use diesel::dsl::count;
 use diesel::prelude::*;
+use diesel::result::Error as DieselError;
+use diesel::sql_query;
 use diesel::sqlite::SqliteConnection;
 
 use actix::prelude::*;
@@ -20,18 +23,24 @@ use chrono::NaiveDateTime;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
 use dislog_hal::Bytes;
+use ewf_core::async_parse_check;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{async_parse_check};
 use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use hex::{FromHex, ToHex};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
 
+use common_structure::convert_quota_request::ConvertQoutaRequestWrapper;
 use common_structure::digital_currency::DigitalCurrencyWrapper;
 use common_structure::transaction::TransactionWrapper;
 use wallet_common::currencies::{
-    AddCurrencyParam, CurrencyEntity, CurrencyStatus, UnlockCurrencyParam,
+    AddCurrencyParam, ConfirmCurrencyParam, CurrencyConvertParam, CurrencyDepositParam,
+    CurrencyEntity, CurrencyQuery, CurrencyStatus, CurrencyWithdrawParam,
+    PickSpecifiedNumCurrencyParam, QueryCurrencyStatisticsParam, StatisticsItem,
+    UnLockCurrencyParam,
 };
+use wallet_common::http_cli::reqwest_json;
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 
 type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
@@ -39,6 +48,8 @@ type LocalPool = Pool<ConnectionManager<SqliteConnection>>;
 static CURRENCY_STORE_TABLE: &'static str = r#"
 CREATE TABLE "currency_store" (
     "id" VARCHAR(255) NOT NULL,
+    "owner_uid" VARCHAR(255) NOT NULL,
+    "value" BIGINT NOT NULL,
     "currency" TEXT NOT NULL,
     "txid" VARCHAR(255) NOT NULL,
     "update_time" TIMESTAMP NOT NULL,
@@ -47,6 +58,28 @@ CREATE TABLE "currency_store" (
     PRIMARY KEY ("id")
   )
 "#;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyDepositRequest {
+    pub target: String,
+    pub bank_num: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyDepositResponse(Vec<String>);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyWithdrawRequest {
+    pub currency: Vec<String>,
+    pub bank_num: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertRequest(ConvertQoutaRequestWrapper);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurrencyConvertResponse(Vec<String>);
 
 pub struct CurrenciesModule {
     pool: LocalPool,
@@ -62,8 +95,10 @@ impl fmt::Debug for CurrenciesModule {
 impl CurrenciesModule {
     pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
-            pool: Pool::new(ConnectionManager::new(&path))
-                .map_err(|_| EwfError::ModuleInstanceError)?,
+            pool: Pool::new(ConnectionManager::new(&path)).map_err(|err| {
+                log::error!("{:?}", err);
+                EwfError::ModuleInstanceError
+            })?,
             bus_addr: None,
         })
     }
@@ -78,6 +113,7 @@ impl CurrenciesModule {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
+            log::error!("{:?}", err);
             return Err(Error::DatabaseInstallError);
         }
 
@@ -102,10 +138,13 @@ impl CurrenciesModule {
 
     /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_currency: &NewCurrencyStore) -> Result<(), Error> {
-        let affect_rows = diesel::insert_into(currency_store)
+        let affect_rows = diesel::replace_into(currency_store)
             .values(new_currency)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -114,27 +153,34 @@ impl CurrenciesModule {
     }
 
     /// 删除表格式数据
-    #[allow(dead_code)]
-    fn delete(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
+    fn remove_pay_lock_currency(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(currency_store.find(id))
+            .filter(dsl::status.eq(CurrencyStatus::Lock.to_int()))
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseDeleteError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseDeleteError
+            })?;
 
-        if affect_rows != 1 {
-            return Err(Error::DatabaseDeleteError);
-        }
+        // 有可能同库两账户互转，状态刚由可用变为待见证
+        // if affect_rows != 1 {
+        //     return Err(Error::DatabaseDeleteError);
+        // }
         Ok(())
     }
 
     /// 模块对外接口
-    /// 解锁货币
-    ///     传入货币发行机构新发行的货币
+    /// 确认货币交易
+    ///     传入货币发行机构新确认的货币
     /// 异常信息
-    ///     CurrencyUnlockError 货币不存在或重复解锁导致失败
-    fn unlock_currency(
+    ///     CurrencyConfirmError 货币不存在或重复确认导致失败
+    fn confirm_currency(
         db_conn: &SqliteConnection,
-        currency: &DigitalCurrencyWrapper,
+        param:ConfirmCurrencyParam,
     ) -> Result<(), Error> {
+        let b_currency = Vec::<u8>::from_hex(&param.currency_str).unwrap();
+        let currency = DigitalCurrencyWrapper::from_bytes(&b_currency).unwrap();
+
         let quota_id = currency
             .get_body()
             .get_quota_info()
@@ -142,22 +188,21 @@ impl CurrenciesModule {
             .get_id()
             .encode_hex::<String>();
 
-        let currency_str = currency.to_bytes().encode_hex::<String>();
-
         let affect_rows = diesel::update(
             currency_store
                 .find(quota_id)
-                .filter(dsl::status.eq(CurrencyStatus::Lock.to_int())),
+                .filter(dsl::owner_uid.eq(param.owner_uid))
+                .filter(dsl::status.eq(CurrencyStatus::WaitConfirm.to_int())),
         )
         .set((
-            dsl::currency.eq(currency_str),
+            dsl::currency.eq(param.currency_str),
             dsl::status.eq(CurrencyStatus::Avail.to_int()),
         ))
         .execute(db_conn)
-        .map_err(|_| Error::CurrencyUnlockError)?;
+        .map_err(|_| Error::CurrencyConfirmError)?;
 
         if affect_rows != 1 {
-            return Err(Error::CurrencyUnlockError);
+            return Err(Error::CurrencyConfirmError);
         }
         Ok(())
     }
@@ -166,33 +211,47 @@ impl CurrenciesModule {
     /// 添加货币到模块
     ///     传入（货币，交易ID，交易对手方ID）
     /// 异常信息
-    ///     DatabaseInsertError 货币已存在
+    ///     CurrencyParamInvalid 输入货币未通过校验
     fn add_currency(db_conn: &SqliteConnection, entity: &AddCurrencyParam) -> Result<(), Error> {
-        let (quota_id, currency_str, txid, last_owner_id, status) = match entity {
+        let (quota_id, owner_uid, value, currency_str, txid, last_owner_id, status) = match entity {
             AddCurrencyParam::AvailEntity {
-                currency,
+                owner_uid,
+                currency_str,
                 txid,
                 last_owner_id,
             } => {
+                let currency = DigitalCurrencyWrapper::from_bytes(
+                    &Vec::<u8>::from_hex(&currency_str).map_err(|_| Error::CurrencyParamInvalid)?,
+                )
+                .map_err(|_| Error::CurrencyParamInvalid)?;
                 let id = currency
                     .get_body()
                     .get_quota_info()
                     .get_body()
                     .get_id()
                     .encode_hex::<String>();
+                let value = currency.get_body().get_quota_info().get_body().get_value();
                 (
                     id,
-                    currency.to_bytes().encode_hex::<String>(),
+                    owner_uid,
+                    value,
+                    currency_str,
                     txid,
                     last_owner_id,
                     CurrencyStatus::Avail,
                 )
             }
-            AddCurrencyParam::LockEntity {
-                transaction,
+            AddCurrencyParam::WaitConfirmEntity {
+                owner_uid,
+                transaction_str,
                 txid,
                 last_owner_id,
             } => {
+                let transaction = TransactionWrapper::from_bytes(
+                    &Vec::<u8>::from_hex(&transaction_str)
+                        .map_err(|_| Error::CurrencyParamInvalid)?,
+                )
+                .map_err(|_| Error::CurrencyParamInvalid)?;
                 let id = transaction
                     .get_body()
                     .get_currency()
@@ -201,12 +260,21 @@ impl CurrenciesModule {
                     .get_body()
                     .get_id()
                     .encode_hex::<String>();
+                let value = transaction
+                    .get_body()
+                    .get_currency()
+                    .get_body()
+                    .get_quota_info()
+                    .get_body()
+                    .get_value();
                 (
                     id,
-                    transaction.to_bytes().encode_hex::<String>(),
+                    owner_uid,
+                    value,
+                    transaction_str,
                     txid,
                     last_owner_id,
-                    CurrencyStatus::Lock,
+                    CurrencyStatus::WaitConfirm,
                 )
             }
         };
@@ -217,6 +285,8 @@ impl CurrenciesModule {
 
         let new_currency_store = NewCurrencyStore {
             id: &quota_id,
+            owner_uid: owner_uid,
+            value: value as i64,
             currency: &currency_str,
             txid,
             update_time: &timestamp,
@@ -244,6 +314,10 @@ impl CurrenciesModule {
             .first::<CurrencyStore>(db_conn)
             .map_err(|_| Error::CurrencyByidNotFound)?;
 
+        Self::deserialize_currency(&currency)
+    }
+
+    fn deserialize_currency(currency: &CurrencyStore) -> Result<CurrencyEntity, Error> {
         Ok(match CurrencyStatus::from(currency.status) {
             CurrencyStatus::Avail => {
                 let avail_currency = DigitalCurrencyWrapper::from_bytes(
@@ -253,29 +327,233 @@ impl CurrenciesModule {
                 .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
 
                 CurrencyEntity::AvailEntity {
-                    id: currency.id,
+                    id: currency.id.clone(),
+                    owner_uid: currency.owner_uid.clone(),
+                    value: currency.value as u64,
                     currency: avail_currency,
-                    txid: currency.txid,
+                    currency_str: currency.currency.clone(),
+                    txid: currency.txid.clone(),
                     update_time: currency.update_time.timestamp_millis(),
-                    last_owner_id: currency.last_owner_id,
+                    last_owner_id: currency.last_owner_id.clone(),
                 }
             }
             CurrencyStatus::Lock => {
-                let lock_currency = TransactionWrapper::from_bytes(
+                let avail_currency = DigitalCurrencyWrapper::from_bytes(
                     &Vec::<u8>::from_hex(&currency.currency)
                         .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
                 )
                 .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
 
                 CurrencyEntity::LockEntity {
-                    id: currency.id,
-                    transaction: lock_currency,
-                    txid: currency.txid,
+                    id: currency.id.clone(),
+                    owner_uid: currency.owner_uid.clone(),
+                    value: currency.value as u64,
+                    currency: avail_currency,
+                    currency_str: currency.currency.clone(),
+                    txid: currency.txid.clone(),
                     update_time: currency.update_time.timestamp_millis(),
-                    last_owner_id: currency.last_owner_id,
+                    last_owner_id: currency.last_owner_id.clone(),
+                }
+            }
+            CurrencyStatus::WaitConfirm => {
+                let transaction = TransactionWrapper::from_bytes(
+                    &Vec::<u8>::from_hex(&currency.currency)
+                        .map_err(|_| Error::DatabaseJsonDeSerializeError)?,
+                )
+                .map_err(|_| Error::DatabaseJsonDeSerializeError)?;
+
+                CurrencyEntity::WaitConfirmEntity {
+                    id: currency.id.clone(),
+                    owner_uid: currency.owner_uid.clone(),
+                    value: currency.value as u64,
+                    transaction: transaction,
+                    transaction_str: currency.currency.clone(),
+                    txid: currency.txid.clone(),
+                    update_time: currency.update_time.timestamp_millis(),
+                    last_owner_id: currency.last_owner_id.clone(),
                 }
             }
         })
+    }
+
+    /// 模块对外接口
+    /// 分页查询管理货币列表
+    ///     传入查询条件
+    ///         order_by和asc_or_desc暂不使用
+    /// 异常信息
+    ///     
+    fn query_currency_comb(
+        db_conn: &SqliteConnection,
+        query: &CurrencyQuery,
+    ) -> Result<Vec<CurrencyEntity>, Error> {
+        let currencys = currency_store
+            .filter(dsl::owner_uid.eq(query.uid.clone()))
+            .order_by(dsl::value.asc())
+            .limit(query.query_param.page_items as i64)
+            .offset((query.query_param.page_items * (query.query_param.page_num - 1)) as i64)
+            .load::<CurrencyStore>(db_conn)
+            .map_err(|_| Error::DatabaseSelectError)?;
+
+        let mut rets = Vec::<CurrencyEntity>::new();
+        for currency in currencys {
+            rets.push(Self::deserialize_currency(&currency)?);
+        }
+
+        Ok(rets)
+    }
+
+    /// 模块对外接口
+    /// 查询货币概览信息
+    ///     输入要查询的用户uid, 货币种类
+    /// 异常信息
+    ///     
+    fn query_currency_statistics(
+        db_conn: &SqliteConnection,
+        param: &QueryCurrencyStatisticsParam,
+    ) -> Result<Vec<StatisticsItem>, Error> {
+        let statistics = currency_store
+            .select((
+                dsl::value,
+                diesel::dsl::sql::<diesel::sql_types::BigInt>("count(id)"),
+            ))
+            .filter(dsl::owner_uid.eq(param.owner_uid.clone()))
+            .filter(
+                dsl::status
+                    .eq(if param.has_avail {
+                        CurrencyStatus::Avail.to_int()
+                    } else {
+                        -1
+                    })
+                    .or(dsl::status.eq(if param.has_lock {
+                        CurrencyStatus::Lock.to_int()
+                    } else {
+                        -1
+                    }))
+                    .or(dsl::status.eq(if param.has_wait_confirm {
+                        CurrencyStatus::WaitConfirm.to_int()
+                    } else {
+                        -1
+                    })),
+            )
+            .group_by(dsl::value)
+            .load::<(i64, i64)>(db_conn)
+            .map_err(|_| Error::DatabaseSelectError)?;
+
+        let mut rets = Vec::<StatisticsItem>::new();
+        for each in statistics {
+            rets.push(StatisticsItem {
+                value: each.0 as u64,
+                num: each.1 as u64,
+            });
+        }
+
+        Ok(rets)
+    }
+
+    /// 模块对外接口
+    /// 挑选指定数目的可用货币
+    ///        被选中的货币被锁定
+    /// 异常信息
+    ///     AvailCurrencyNotEnough 可用货币不足
+    fn pick_specified_num_currency(
+        db_conn: &SqliteConnection,
+        param: &PickSpecifiedNumCurrencyParam,
+    ) -> Result<Vec<CurrencyEntity>, Error> {
+        let mut rets = Vec::<CurrencyEntity>::new();
+
+        for statistics in &param.items {
+            let currencys: Vec<CurrencyStore> = currency_store
+                .filter(dsl::owner_uid.eq(param.owner_uid.clone()))
+                .filter(dsl::value.eq(statistics.value.clone() as i64))
+                .filter(dsl::status.eq(CurrencyStatus::Avail.to_int()))
+                .limit(statistics.num as i64)
+                .group_by(dsl::value)
+                .load(db_conn)
+                .map_err(|_| Error::DatabaseSelectError)?;
+
+            if currencys.len() != statistics.num as usize {
+                return Err(Error::AvailCurrencyNotEnough);
+            }
+
+            for currency in currencys {
+                rets.push(Self::deserialize_currency(&currency)?);
+
+                // TODO 加锁失败，全部解锁并返回错误或者重新选择一组
+                diesel::update(
+                    currency_store
+                        .filter(dsl::id.eq(currency.id))
+                        .filter(dsl::status.eq(CurrencyStatus::Avail.to_int())),
+                )
+                .set(dsl::status.eq(CurrencyStatus::Lock.to_int()))
+                .execute(db_conn)
+                .map_err(|_| Error::PickCurrencyError)?;
+            }
+        }
+
+        Ok(rets)
+    }
+
+    /// 模块对外接口
+    /// 解锁交易锁定货币
+    ///     传入锁定货币的ID集合
+    /// 异常信息
+    ///     CurrencyUnlockError 货币解锁失败
+    fn unlock_currency(
+        db_conn: &SqliteConnection,
+        param: &UnLockCurrencyParam,
+    ) -> Result<(), Error> {
+        let mut has_error=false;
+        for id in &param.ids {
+            let updated_row = diesel::update(
+                currency_store
+                    .filter(dsl::id.eq(id))
+                    .filter(dsl::status.eq(CurrencyStatus::Lock.to_int())),
+            )
+            .set(dsl::status.eq(CurrencyStatus::Avail.to_int()))
+            .execute(db_conn)
+            .map_err(|_| Error::CurrencyUnlockError)?;
+
+            if updated_row == 0{
+                log::error!("currencies.unlock_currency error when id={}", id);
+                has_error=true;
+            }
+        }
+        if has_error{
+            return Err(Error::CurrencyUnlockError);
+        }
+        Ok(())
+    }
+
+    /// 模块对外接口
+    /// 充值
+    /// 异常信息
+    async fn deposit(
+        db_conn: &SqliteConnection,
+        param: CurrencyDepositParam,
+    ) -> Result<(), Error> {
+        for currency in param.currencys {
+            Self::add_currency(
+                db_conn,
+                &AddCurrencyParam::AvailEntity {
+                    owner_uid: param.uid.clone(),
+                    currency_str: currency,
+                    txid: "bank".to_string(),
+                    last_owner_id: "bank".to_string(),
+                },
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// 模块对外接口
+    /// 提现
+    /// 异常信息
+    async fn withdraw(
+        db_conn: &SqliteConnection,
+        param: &CurrencyWithdrawParam,
+    ) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -307,12 +585,12 @@ impl Handler<Call> for CurrenciesModule {
 
                     json!(initialed)
                 }
-                "unlock_currency" => {
-                    let param: UnlockCurrencyParam = match serde_json::from_value(msg.args) {
+                "confirm_currency" => {
+                    let param: ConfirmCurrencyParam = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
-                    json!(Self::unlock_currency(&db_conn, &param.currency)
+                    json!(Self::confirm_currency(&db_conn, param)
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 "add_currency" => {
@@ -322,12 +600,62 @@ impl Handler<Call> for CurrenciesModule {
                     };
                     json!(Self::add_currency(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
                 }
+                "remove_pay_lock_currency" => {
+                    let param: String = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::remove_pay_lock_currency(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
                 "find_currency_by_id" => {
                     let param: String = match serde_json::from_value(msg.args) {
                         Ok(param) => param,
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::find_currency_by_id(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "query_currency_comb" => {
+                    let param: CurrencyQuery = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::query_currency_comb(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "query_currency_statistics" => {
+                    let param: QueryCurrencyStatisticsParam = match serde_json::from_value(msg.args)
+                    {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::query_currency_statistics(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "pick_specified_num_currency" => {
+                    let param: PickSpecifiedNumCurrencyParam =
+                        match serde_json::from_value(msg.args) {
+                            Ok(param) => param,
+                            Err(_) => return Err(EwfError::CallParamValidFaild),
+                        };
+                    json!(Self::pick_specified_num_currency(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "unlock_currency" => {
+                    let param: UnLockCurrencyParam = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::unlock_currency(&db_conn, &param).map_err(|err| err.to_ewf_error())?)
+                }
+                "deposit" => {
+                    let param: CurrencyDepositParam = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::deposit(&db_conn, param)
+                        .await
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 _ => return Err(EwfError::MethodNotFoundError),
@@ -387,26 +715,22 @@ mod tests {
         CurrenciesModule::create(&db_conn).unwrap_or(());
         diesel::delete(currency_store).execute(&db_conn).unwrap();
 
-        let currency =
-            DigitalCurrencyWrapper::from_bytes(&Vec::<u8>::from_hex(&CURRENCY_EXAMPLE).unwrap())
-                .unwrap();
         let ans = CurrenciesModule::add_currency(
             &db_conn,
             &AddCurrencyParam::AvailEntity {
-                currency,
+                owner_uid: "test".to_string(),
+                currency_str: CURRENCY_EXAMPLE.to_string(),
                 txid: "zxzxc".to_string(),
                 last_owner_id: "shen".to_string(),
             },
         );
         assert_eq!(ans.is_ok(), true);
 
-        let transaction =
-            TransactionWrapper::from_bytes(&Vec::<u8>::from_hex(&TRANSACTION_EXAMPLE).unwrap())
-                .unwrap();
         let ans = CurrenciesModule::add_currency(
             &db_conn,
-            &AddCurrencyParam::LockEntity {
-                transaction,
+            &AddCurrencyParam::WaitConfirmEntity {
+                owner_uid: "testxx1".to_string(),
+                transaction_str: TRANSACTION_EXAMPLE.to_string(),
                 txid: "zxzxc1".to_string(),
                 last_owner_id: "shen1".to_string(),
             },
@@ -418,10 +742,14 @@ mod tests {
             &"343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98",
         );
         assert_eq!(ans.is_ok(), true);
+        println!("{:?}", json!(ans).to_string());
         assert!(match ans.unwrap() {
             CurrencyEntity::AvailEntity {
                 id,
+                owner_uid,
+                value,
                 currency,
+                currency_str,
                 txid,
                 update_time: _,
                 last_owner_id,
@@ -430,8 +758,11 @@ mod tests {
                     "343372267f27b5a9b5519a86ed3efc3d7a4f2a4199a907dd1d92011e875f4b98",
                     id
                 );
+                assert_eq!("test", owner_uid);
+                assert_eq!(10, value);
                 assert_eq!("zxzxc", txid);
                 assert_eq!("shen", last_owner_id);
+                assert_eq!(CURRENCY_EXAMPLE, currency_str);
                 assert_eq!(CURRENCY_EXAMPLE, currency.to_bytes().encode_hex::<String>());
                 true
             }
@@ -441,11 +772,15 @@ mod tests {
             &db_conn,
             &"c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e",
         );
+        println!("{:?}", ans);
         assert_eq!(ans.is_ok(), true);
         assert!(match ans.unwrap() {
-            CurrencyEntity::LockEntity {
+            CurrencyEntity::WaitConfirmEntity {
                 id,
+                owner_uid,
+                value,
                 transaction,
+                transaction_str,
                 txid,
                 update_time: _,
                 last_owner_id,
@@ -454,8 +789,11 @@ mod tests {
                     "c96b931c575aaf9591e2312e6a540d651311901fd574719b6c3fb45af7f1c92e",
                     id
                 );
+                assert_eq!("testxx1", owner_uid);
+                assert_eq!(10000, value);
                 assert_eq!("zxzxc1", txid);
                 assert_eq!("shen1", last_owner_id);
+                assert_eq!(TRANSACTION_EXAMPLE, transaction_str);
                 assert_eq!(
                     TRANSACTION_EXAMPLE,
                     transaction.to_bytes().encode_hex::<String>()
@@ -464,5 +802,19 @@ mod tests {
             }
             _ => false,
         });
+
+        let ans = CurrenciesModule::query_currency_statistics(
+            &db_conn,
+            &QueryCurrencyStatisticsParam {
+                has_avail: false,
+                has_lock: false,
+                has_wait_confirm: true,
+                owner_uid: "testxx1".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(1, ans.len());
+        assert_eq!(10000, ans[0].value);
+        assert_eq!(1, ans[0].num);
     }
 }

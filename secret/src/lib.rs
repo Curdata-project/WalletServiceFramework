@@ -29,12 +29,15 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use std::fmt;
 
+use common_structure::transaction::{Transaction, TransactionWrapper};
+use kv_object::kv_object::MsgType;
+use kv_object::prelude::KValueObject;
 use wallet_common::http_cli::reqwest_json;
 use wallet_common::prepare::{ModInitialParam, ModStatus};
 use wallet_common::query::QueryParam;
 use wallet_common::secret::{
     CertificateEntity, KeyPairEntity, RegisterParam, RegisterRequest, RegisterResponse,
-    SecretEntity,
+    SecretEntity, SignTransactionRequest, SignTransactionResponse,
 };
 use wallet_common::user::UserEntity;
 
@@ -65,8 +68,10 @@ impl fmt::Debug for SecretModule {
 impl SecretModule {
     pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
-            pool: Pool::new(ConnectionManager::new(&path))
-                .map_err(|_| EwfError::ModuleInstanceError)?,
+            pool: Pool::new(ConnectionManager::new(&path)).map_err(|err| {
+                log::error!("{:?}", err);
+                EwfError::ModuleInstanceError
+            })?,
             bus_addr: None,
         })
     }
@@ -81,6 +86,7 @@ impl SecretModule {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
+            log::error!("{:?}", err);
             return Err(Error::DatabaseInstallError);
         }
 
@@ -105,10 +111,13 @@ impl SecretModule {
 
     /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_secret: &NewSecretStore) -> Result<(), Error> {
-        let affect_rows = diesel::insert_into(secret_store)
+        let affect_rows = diesel::replace_into(secret_store)
             .values(new_secret)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -121,7 +130,10 @@ impl SecretModule {
     fn delete(db_conn: &SqliteConnection, id: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(secret_store.find(id))
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseDeleteError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseDeleteError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseDeleteError);
@@ -151,7 +163,13 @@ impl SecretModule {
             info: param.info,
         };
 
-        match reqwest_json(&param.url, serde_json::to_value(register_req).unwrap(), 5).await {
+        match reqwest_json(
+            &param.url,
+            serde_json::to_value(register_req).unwrap(),
+            param.timeout,
+        )
+        .await
+        {
             Err(err) => return Err(Error::HttpError(err)),
             Ok(resp) => {
                 if resp["code"] == json!(0) {
@@ -177,7 +195,7 @@ impl SecretModule {
                         cert: new_secret.cert.to_string(),
                     })
                 } else {
-                    log::info!(
+                    log::warn!(
                         "response from {} err_code {}: message {}",
                         param.url,
                         resp["code"],
@@ -274,6 +292,40 @@ impl SecretModule {
 
         Ok(rets)
     }
+
+    /// 模块对外接口
+    /// 加密传入的交易体
+    ///     传入交易体
+    ///         
+    /// 异常信息
+    ///     
+    fn sign_transaction(
+        db_conn: &SqliteConnection,
+        query_param: &SignTransactionRequest,
+    ) -> Result<SignTransactionResponse, Error> {
+        let user_secret = Self::get_secret(db_conn, &query_param.uid)?;
+
+        let user_keypair = match user_secret.keypair {
+            KeyPairEntity::Sm2(user_keypair) => user_keypair,
+        };
+
+        let mut rng = common_structure::get_rng_core();
+
+        let mut ret = Vec::<String>::new();
+        for each in &query_param.datas {
+            let mut transaction = TransactionWrapper::new(
+                MsgType::Transaction,
+                Transaction::new(query_param.oppo_cert.clone(), each.clone()),
+            );
+            transaction
+                .fill_kvhead(&user_keypair, &mut rng)
+                .map_err(|_| Error::SignTransactionError)?;
+
+            ret.push(transaction.to_bytes().encode_hex::<String>());
+        }
+
+        Ok(SignTransactionResponse { datas: ret })
+    }
 }
 
 impl Actor for SecretModule {
@@ -311,7 +363,7 @@ impl Handler<Call> for SecretModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
 
-                    let new_secret = Self::gen_and_register(&db_conn, param)
+                    let new_secret = Self::gen_and_register(&db_conn, param.clone())
                         .await
                         .map_err(|err| err.to_ewf_error())?;
 
@@ -319,7 +371,7 @@ impl Handler<Call> for SecretModule {
                         uid: new_secret.uid.clone(),
                         cert: Self::cert_to_string(&new_secret.cert),
                         last_tx_time: 0,
-                        account: new_secret.uid,
+                        account: param.info.account,
                     };
 
                     call_mod_througth_bus!(bus_addr, "user", "add_user", json!(new_user));
@@ -342,6 +394,14 @@ impl Handler<Call> for SecretModule {
                         Err(_) => return Err(EwfError::CallParamValidFaild),
                     };
                     json!(Self::query_secret_comb(&db_conn, &param)
+                        .map_err(|err| err.to_ewf_error())?)
+                }
+                "sign_transaction" => {
+                    let param: SignTransactionRequest = match serde_json::from_value(msg.args) {
+                        Ok(param) => param,
+                        Err(_) => return Err(EwfError::CallParamValidFaild),
+                    };
+                    json!(Self::sign_transaction(&db_conn, &param)
                         .map_err(|err| err.to_ewf_error())?)
                 }
                 _ => return Err(EwfError::MethodNotFoundError),

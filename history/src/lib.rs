@@ -18,8 +18,8 @@ use actix::ResponseFuture;
 use chrono::NaiveDateTime;
 use diesel::r2d2::ConnectionManager;
 use diesel::r2d2::Pool;
+use ewf_core::async_parse_check;
 use ewf_core::error::Error as EwfError;
-use ewf_core::{async_parse_check};
 use ewf_core::{Bus, Call, Event, Module, StartNotify};
 use serde_json::{json, Value};
 use std::fmt;
@@ -58,8 +58,10 @@ impl fmt::Debug for HistoryModule {
 impl HistoryModule {
     pub fn new(path: String) -> Result<Self, EwfError> {
         Ok(Self {
-            pool: Pool::new(ConnectionManager::new(&path))
-                .map_err(|_| EwfError::ModuleInstanceError)?,
+            pool: Pool::new(ConnectionManager::new(&path)).map_err(|err| {
+                log::error!("{:?}", err);
+                EwfError::ModuleInstanceError
+            })?,
             bus_addr: None,
         })
     }
@@ -74,6 +76,7 @@ impl HistoryModule {
             if err.to_string().contains("already exists") {
                 return Err(Error::DatabaseExistsInstallError);
             }
+            log::error!("{:?}", err);
             return Err(Error::DatabaseInstallError);
         }
 
@@ -98,10 +101,13 @@ impl HistoryModule {
 
     /// 插入表格式数据，不涉及类型转换
     fn insert(db_conn: &SqliteConnection, new_currency: &NewHistoryStore) -> Result<(), Error> {
-        let affect_rows = diesel::insert_into(history_store)
+        let affect_rows = diesel::replace_into(history_store)
             .values(new_currency)
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseInsertError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseInsertError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseInsertError);
@@ -114,7 +120,10 @@ impl HistoryModule {
     fn delete(db_conn: &SqliteConnection, uid: &str, txid: &str) -> Result<(), Error> {
         let affect_rows = diesel::delete(history_store.find((uid, txid)))
             .execute(db_conn)
-            .map_err(|_| Error::DatabaseDeleteError)?;
+            .map_err(|err| {
+                log::error!("{:?}", err);
+                Error::DatabaseDeleteError
+            })?;
 
         if affect_rows != 1 {
             return Err(Error::DatabaseDeleteError);
@@ -225,7 +234,7 @@ impl Handler<Call> for HistoryModule {
                     json!(Self::query_history_comb(&db_conn, &param)
                         .map_err(|err| err.to_ewf_error())?)
                 }
-                _ => Value::Null,
+                _ => return Err(EwfError::MethodNotFoundError),
             };
 
             Ok(resp)
